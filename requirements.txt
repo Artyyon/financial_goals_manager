@@ -3,3 +3,5 @@ pandas
 bcrypt
 cryptography
 plotly
+customtkinter
+matplotlib
