@@ -1,0 +1,17 @@
+{
+    "users": {
+        "ArthurStiegler": {
+            "password": "$2b$12$MC.u0U3FssovxuvGl6hawuAWVc8Niry8D56EksL1fyp7601dKbdfy",
+            "metas": [
+                {
+                    "id": "1768392221.085333",
+                    "nome": "Futuro",
+                    "objetivo": 10000.0,
+                    "prazo": "2026-01-14",
+                    "atual": 0.0,
+                    "historico": []
+                }
+            ]
+        }
+    }
+}

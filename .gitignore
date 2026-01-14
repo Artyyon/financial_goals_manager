@@ -1,0 +1,84 @@
+####################################
+# Sistema Operacional
+####################################
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+####################################
+# Editores e IDEs
+####################################
+
+# VS Code
+.vscode/
+
+# JetBrains (PyCharm, IntelliJ, etc.)
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+
+####################################
+# Python
+####################################
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+####################################
+# Logs e arquivos temporários
+####################################
+
+*.log
+*.tmp
+*.temp
+
+####################################
+# Arquivos de configuração sensíveis
+####################################
+
+.env
+.env.*
+*.key
+*.pem
+
+####################################
+# Jupyter
+####################################
+
+.ipynb_checkpoints/
+
+####################################
+# Outros
+####################################
+
+node_modules/
