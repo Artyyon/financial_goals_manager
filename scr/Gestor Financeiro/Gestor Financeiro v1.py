@@ -6,7 +6,7 @@ import math
 import json
 import base64
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -76,7 +76,18 @@ def get_user_profile(username, protector):
     if res and res[0]:
         dec = protector.decrypt(res[0])
         return json.loads(dec) if dec else {}
-    return {"renda": 0.0, "work_days": ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"], "h_entrada": "08:00", "h_saida": "18:00", "h_intervalo": 1.0}
+    # Perfil padrão com horários flexíveis iniciais
+    return {
+        "renda": 0.0, 
+        "work_days": ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"],
+        "daily_schedule": {
+            "Segunda": {"ent": "08:00", "sai": "18:00", "int": "01:00"},
+            "Terça": {"ent": "08:00", "sai": "18:00", "int": "01:00"},
+            "Quarta": {"ent": "08:00", "sai": "18:00", "int": "01:00"},
+            "Quinta": {"ent": "08:00", "sai": "18:00", "int": "01:00"},
+            "Sexta": {"ent": "08:00", "sai": "18:00", "int": "01:00"}
+        }
+    }
 
 def save_user_profile(username, profile, protector):
     enc_profile = protector.encrypt(json.dumps(profile))
@@ -111,6 +122,22 @@ def delete_financial_item(item_id):
     conn.commit()
     conn.close()
 
+# --- AUXILIARES DE CÁLCULO ---
+def calculate_hours(ent_str, sai_str, int_str):
+    try:
+        fmt = '%H:%M'
+        t1 = datetime.strptime(ent_str, fmt)
+        t2 = datetime.strptime(sai_str, fmt)
+        # Intervalo tratado como duração
+        tint = datetime.strptime(int_str, fmt)
+        intervalo_decimal = tint.hour + tint.minute / 60.0
+        
+        bruto = (t2 - t1).seconds / 3600
+        liquido = max(0, bruto - intervalo_decimal)
+        return liquido
+    except:
+        return 0
+
 # --- INTERFACE ---
 st.set_page_config(page_title="Atlas Life Cost", layout="wide")
 
@@ -141,32 +168,32 @@ if not st.session_state.logged_in:
             if st.button("Registrar", use_container_width=True):
                 p_hash = bcrypt.hashpw(np.encode(), bcrypt.gensalt()).decode()
                 tp = DataProtector(np)
-                prof = {"renda": 0.0, "work_days": ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"], "h_entrada": "08:00", "h_saida": "18:00", "h_intervalo": 1.0}
+                prof = get_user_profile(nu, tp) # Pega o default
                 enc_p = tp.encrypt(json.dumps(prof))
                 conn = sqlite3.connect(DB_FILE)
                 try:
-                    conn.execute("INSERT INTO users VALUES (?, ?, ?)", (nu, p_hash, enc_p))
+                    conn.execute("INSERT INTO users (username, password_hash, encrypted_profile) VALUES (?, ?, ?)", (nu, p_hash, enc_p))
                     conn.commit(); st.success("Conta criada!")
-                except: st.error("Usuário já existe.")
+                except Exception as e: st.error(f"Usuário já existe ou erro: {e}")
                 finally: conn.close()
 
 else:
     # --- LOGADO ---
     profile = get_user_profile(st.session_state.username, st.session_state.protector)
     
-    # Cálculo automático de horas baseado no perfil
-    try:
-        t1 = datetime.strptime(profile.get('h_entrada', '08:00'), '%H:%M')
-        t2 = datetime.strptime(profile.get('h_saida', '18:00'), '%H:%M')
-        horas_brutas = (t2 - t1).seconds / 3600
-        horas_liquidas_dia = max(0, horas_brutas - float(profile.get('h_intervalo', 1)))
-        dias_trabalhados = len(profile.get('work_days', []))
-        dias_mes_estimados = dias_trabalhados * 4.33 # Média de semanas no mês
-        renda = float(profile.get('renda', 0))
-        valor_hora = renda / (dias_mes_estimados * horas_liquidas_dia) if (dias_mes_estimados * horas_liquidas_dia) > 0 else 0
-    except:
-        valor_hora = 0
-        horas_liquidas_dia = 0
+    # Cálculo automático de horas baseado no perfil flexível
+    horas_semanais = 0
+    sched = profile.get('daily_schedule', {})
+    work_days = profile.get('work_days', [])
+    
+    for dia in work_days:
+        if dia in sched:
+            d = sched[dia]
+            horas_semanais += calculate_hours(d['ent'], d['sai'], d['int'])
+    
+    horas_mensais = horas_semanais * 4.33
+    renda = float(profile.get('renda', 0))
+    valor_hora = renda / horas_mensais if horas_mensais > 0 else 0
 
     with st.sidebar:
         st.title(f"👤 {st.session_state.username}")
@@ -177,39 +204,55 @@ else:
 
     if menu == "Meu Perfil":
         st.title("⚙️ Configuração de Vida")
-        st.info("Personalize sua rotina para o app entender o valor do seu esforço.")
+        st.info("Personalize cada dia da sua semana para um cálculo de tempo ultra-preciso.")
         
-        with st.form("perfil_form"):
+        with st.form("perfil_form_v2"):
             renda_f = st.number_input("Renda Mensal Líquida (R$)", value=float(profile.get('renda', 0)), step=100.0)
             
-            st.markdown("### 🗓️ Sua Rotina de Trabalho")
+            st.markdown("### 🗓️ Seletor de Dias")
             dias_opcoes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
-            dias_f = st.multiselect("Quais dias você trabalha?", options=dias_opcoes, default=profile.get('work_days', ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]))
+            dias_f = st.multiselect("Em quais dias você trabalha?", options=dias_opcoes, default=work_days)
             
-            col1, col2, col3 = st.columns(3)
-            # Converter string do banco para objeto time para o widget
+            st.markdown("### ⏱️ Horários por Dia")
+            new_schedule = {}
+            
             def to_time(s): return datetime.strptime(s, '%H:%M').time()
-            
-            ent_f = col1.time_input("Horário de Entrada", value=to_time(profile.get('h_entrada', '08:00')))
-            sai_f = col2.time_input("Horário de Saída", value=to_time(profile.get('h_saida', '18:00')))
-            int_f = col3.number_input("Intervalo (Horas)", value=float(profile.get('h_intervalo', 1.0)), step=0.5)
-            
-            submitted = st.form_submit_button("Atualizar Perfil Atlas")
+
+            if not dias_f:
+                st.warning("Selecione pelo menos um dia de trabalho.")
+            else:
+                for dia in dias_f:
+                    st.write(f"**{dia}**")
+                    c1, c2, c3 = st.columns(3)
+                    
+                    # Carrega valores existentes ou defaults
+                    current_d = sched.get(dia, {"ent": "08:00", "sai": "18:00", "int": "01:00"})
+                    
+                    ent_val = c1.time_input(f"Entrada ({dia})", value=to_time(current_d['ent']), key=f"ent_{dia}")
+                    sai_val = c2.time_input(f"Saída ({dia})", value=to_time(current_d['sai']), key=f"sai_{dia}")
+                    int_val = c3.time_input(f"Intervalo ({dia})", value=to_time(current_d['int']), key=f"int_{dia}")
+                    
+                    new_schedule[dia] = {
+                        "ent": ent_val.strftime('%H:%M'),
+                        "sai": sai_val.strftime('%H:%M'),
+                        "int": int_val.strftime('%H:%M')
+                    }
+                    st.divider()
+
+            submitted = st.form_submit_button("Salvar Minha Rotina Atlas")
             
             if submitted:
-                new_profile = {
+                updated_profile = {
                     "renda": renda_f,
                     "work_days": dias_f,
-                    "h_entrada": ent_f.strftime('%H:%M'),
-                    "h_saida": sai_f.strftime('%H:%M'),
-                    "h_intervalo": int_f
+                    "daily_schedule": new_schedule
                 }
-                save_user_profile(st.session_state.username, new_profile, st.session_state.protector)
-                st.success("Perfil salvo! Recalculando valor da vida...")
+                save_user_profile(st.session_state.username, updated_profile, st.session_state.protector)
+                st.success("Rotina atualizada com sucesso!")
                 st.rerun()
         
         if valor_hora > 0:
-            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}", help="Calculado com base na sua rotina líquida mensal.")
+            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}", help=f"Baseado em {horas_mensais:.1f} horas mensais calculadas.")
 
     elif menu == "Choque Consciente":
         st.title("🍦 Quanto da sua vida isso custa?")
@@ -251,7 +294,6 @@ else:
                 desc = st.text_input("Descrição")
                 if st.form_submit_button("Salvar Registro"):
                     tid = str(datetime.now().timestamp())
-                    # Cálculo de tempo para saídas
                     total_h = val / valor_hora if valor_hora > 0 and tt == "Saída" else 0
                     tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if tt == "Saída" else "-"
                     item = {
