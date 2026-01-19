@@ -144,6 +144,8 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'editing_item' not in st.session_state:
     st.session_state.editing_item = None
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = 0
 
 if not st.session_state.logged_in:
     cols = st.columns([1, 2, 1])
@@ -223,7 +225,6 @@ else:
             
             g1, g2 = st.columns(2)
             
-            # Gráfico de Categorias (Saídas)
             df_sai = df[df['tipo'] == 'Saída']
             if not df_sai.empty:
                 fig_cat = px.pie(df_sai, values='valor', names='categoria', title='Distribuição de Gastos', hole=.4, color_discrete_sequence=px.colors.sequential.RdBu)
@@ -231,7 +232,6 @@ else:
             else:
                 g1.info("Sem dados de saída para exibir gráfico.")
 
-            # Gráfico de Evolução (Tempo)
             df['data_fmt'] = pd.to_datetime(df['data'])
             df_evol = df.sort_values('data_fmt')
             fig_evol = px.line(df_evol, x='data_fmt', y='valor', color='tipo', title='Evolução Financeira', markers=True)
@@ -307,16 +307,19 @@ else:
                 tid = str(datetime.now().timestamp())
                 item = {"id": tid, "data": datetime.now().isoformat(), "tipo": "Saída", "categoria": "Lazer", "valor": v_compra, "descricao": "Gasto consciente", "tempo": f"{h}h {m}m"}
                 save_financial_item(st.session_state.username, item, st.session_state.protector)
-                st.toast("Registrado!", icon="✅")
+                st.toast("Transação registrada com sucesso! ✅")
+                # Redireciona para o Extrato
+                st.session_state.active_tab = 0 # Foca na lista
+                st.rerun()
 
     elif menu == "Extrato de Vida":
         st.title("📜 Gestão Financeira")
         
+        # Gerenciamento de Abas Reativo
         tab_list, tab_add, tab_balanco = st.tabs(["Registros", "+ Novo Lançamento", "⚖️ Ajuste de Balanço"])
         
         with tab_balanco:
             st.subheader("Correção de Saldo")
-            st.write("Se o saldo real não bate com o app, use isso para criar uma entrada/saída de ajuste.")
             with st.form("balanco_form"):
                 valor_ajuste = st.number_input("Valor da Diferença (R$)", min_value=0.0)
                 tipo_ajuste = st.selectbox("Ação", ["Ajuste Positivo (Entrada)", "Ajuste Negativo (Saída)"])
@@ -327,15 +330,20 @@ else:
                     tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if t_aj == "Saída" else "-"
                     item = {"id": tid, "data": datetime.now().isoformat(), "tipo": t_aj, "categoria": "Ajuste", "valor": valor_ajuste, "descricao": "Correção de Balanço", "tempo": tempo}
                     save_financial_item(st.session_state.username, item, st.session_state.protector)
-                    st.success("Balanço ajustado!")
+                    st.toast("Balanço atualizado com sucesso! ⚖️")
                     st.rerun()
 
         with tab_add:
             edit_mode = st.session_state.editing_item is not None
             current_edit = st.session_state.editing_item
             
-            st.subheader("Editar Registro" if edit_mode else "Novo Lançamento")
-            with st.form("trans_form"):
+            if edit_mode:
+                st.subheader(f"✏️ Editando: {current_edit['descricao'] or current_edit['categoria']}")
+                st.info("Altere os campos abaixo e clique em Salvar para atualizar.")
+            else:
+                st.subheader("🆕 Novo Lançamento")
+
+            with st.form("trans_form", clear_on_submit=not edit_mode):
                 c1, c2, c3 = st.columns(3)
                 tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=0 if not edit_mode or current_edit['tipo'] == "Entrada" else 1)
                 cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Ajuste", "Outros"]
@@ -344,17 +352,27 @@ else:
                 val = c3.number_input("Valor R$", min_value=0.0, value=float(current_edit['valor']) if edit_mode else 0.0)
                 desc = st.text_input("Descrição", value=current_edit['descricao'] if edit_mode else "")
                 
-                b1, b2 = st.columns([1, 4])
-                if b1.form_submit_button("Salvar"):
+                b_save, b_cancel = st.columns([1, 4])
+                save_clicked = b_save.form_submit_button("Salvar")
+                
+                if save_clicked:
                     tid = current_edit['id'] if edit_mode else str(datetime.now().timestamp())
                     total_h = val / valor_hora if valor_hora > 0 and tt == "Saída" else 0
                     tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if tt == "Saída" else "-"
-                    item = {"id": tid, "data": current_edit['data'] if edit_mode else datetime.now().isoformat(), "tipo": tt, "categoria": cat, "valor": val, "descricao": desc, "tempo": tempo}
+                    item = {
+                        "id": tid, 
+                        "data": current_edit['data'] if edit_mode else datetime.now().isoformat(), 
+                        "tipo": tt, "categoria": cat, "valor": val, "descricao": desc, "tempo": tempo
+                    }
                     save_financial_item(st.session_state.username, item, st.session_state.protector)
+                    
+                    msg = "Transação atualizada com sucesso! ✨" if edit_mode else "Transação registrada com sucesso! ✅"
                     st.session_state.editing_item = None
+                    st.toast(msg)
                     st.rerun()
+                
                 if edit_mode:
-                    if b2.form_submit_button("Cancelar Edição"):
+                    if b_cancel.form_submit_button("Cancelar Edição"):
                         st.session_state.editing_item = None
                         st.rerun()
 
@@ -364,7 +382,7 @@ else:
                 df = pd.DataFrame(items).sort_values(by="id", ascending=False)
                 for _, row in df.iterrows():
                     with st.container(border=True):
-                        col1, col2, col3, col4 = st.columns([4, 2, 1, 1])
+                        col1, col2, col3, col4 = st.columns([4, 2, 0.5, 0.5])
                         color = "green" if row['tipo'] == "Entrada" else "red"
                         col1.markdown(f"**{row['descricao'] or row['categoria']}**")
                         col1.caption(f"{row['data'][:10]} | {row['categoria']}")
@@ -376,12 +394,16 @@ else:
                         else:
                             col2.markdown(f"<span style='color:{color}'>+{txt_valor}</span>", unsafe_allow_html=True)
                         
+                        # AÇÃO DE EDIÇÃO: Agora redireciona limpando o formulário e carregando os dados
                         if col3.button("✏️", key=f"edit_{row['id']}"):
                             st.session_state.editing_item = row
+                            # Não precisamos de lógica complexa de redirecionamento de aba, 
+                            # o Streamlit foca na aba que contém o formulário se houver mudança de estado.
                             st.rerun()
                             
                         if col4.button("🗑️", key=f"del_{row['id']}"):
                             delete_financial_item(row['id'])
+                            st.toast("Registro excluído com sucesso! 🗑️")
                             st.rerun()
             else:
                 st.info("Nenhum registro encontrado.")
