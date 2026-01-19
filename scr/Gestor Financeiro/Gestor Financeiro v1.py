@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- CONFIGURAÇÕES E PASTAS ---
 DB_FILE = "db/atlas_life_v1.db"
@@ -141,6 +142,8 @@ st.set_page_config(page_title="Atlas Life Cost", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'editing_item' not in st.session_state:
+    st.session_state.editing_item = None
 
 if not st.session_state.logged_in:
     cols = st.columns([1, 2, 1])
@@ -194,16 +197,51 @@ else:
 
     with st.sidebar:
         st.title(f"👤 {st.session_state.username}")
-        menu = st.radio("Menu", ["Choque Consciente", "Extrato de Vida", "Meu Perfil"])
+        menu = st.radio("Menu", ["Visão Geral", "Choque Consciente", "Extrato de Vida", "Meu Perfil"])
         if st.button("Sair"):
             st.session_state.logged_in = False
             st.rerun()
 
-    if menu == "Meu Perfil":
-        st.title("⚙️ Configuração de Vida")
-        st.info("Personalize cada dia da sua semana para um cálculo de tempo ultra-preciso.")
+    if menu == "Visão Geral":
+        st.title("📊 Dashboard Atlas")
+        items = get_financial_items(st.session_state.username, st.session_state.protector)
         
-        # Usamos uma lógica fora do form para o multiselect ser reativo
+        if items:
+            df = pd.DataFrame(items)
+            df['valor'] = df['valor'].astype(float)
+            
+            ent_total = df[df['tipo'] == 'Entrada']['valor'].sum()
+            sai_total = df[df['tipo'] == 'Saída']['valor'].sum()
+            balanco = ent_total - sai_total
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Entradas", f"R$ {ent_total:,.2f}")
+            c2.metric("Saídas", f"R$ {sai_total:,.2f}", delta=f"-{sai_total:,.2f}", delta_color="inverse")
+            c3.metric("Balanço Atual", f"R$ {balanco:,.2f}", delta=f"{balanco:,.2f}")
+
+            st.divider()
+            
+            g1, g2 = st.columns(2)
+            
+            # Gráfico de Categorias (Saídas)
+            df_sai = df[df['tipo'] == 'Saída']
+            if not df_sai.empty:
+                fig_cat = px.pie(df_sai, values='valor', names='categoria', title='Distribuição de Gastos', hole=.4, color_discrete_sequence=px.colors.sequential.RdBu)
+                g1.plotly_chart(fig_cat, use_container_width=True)
+            else:
+                g1.info("Sem dados de saída para exibir gráfico.")
+
+            # Gráfico de Evolução (Tempo)
+            df['data_fmt'] = pd.to_datetime(df['data'])
+            df_evol = df.sort_values('data_fmt')
+            fig_evol = px.line(df_evol, x='data_fmt', y='valor', color='tipo', title='Evolução Financeira', markers=True)
+            g2.plotly_chart(fig_evol, use_container_width=True)
+            
+        else:
+            st.info("Adicione alguns registros no Extrato para ver o dashboard!")
+
+    elif menu == "Meu Perfil":
+        st.title("⚙️ Configuração de Vida")
         renda_input = st.number_input("Renda Mensal Líquida (R$)", value=float(profile.get('renda', 0)), step=100.0)
         
         st.markdown("### 🗓️ Seletor de Dias")
@@ -221,54 +259,34 @@ else:
         if 'work_days_buffer' not in st.session_state:
             st.session_state.work_days_buffer = work_days
 
-        dias_f = st.multiselect(
-            "Em quais dias você trabalha?", 
-            options=dias_opcoes, 
-            default=st.session_state.work_days_buffer,
-            key="ms_work_days"
-        )
-        # Sincroniza o buffer com o widget
+        dias_f = st.multiselect("Em quais dias você trabalha?", options=dias_opcoes, default=st.session_state.work_days_buffer, key="ms_work_days")
         st.session_state.work_days_buffer = dias_f
 
-        # Iniciamos o formulário apenas para o salvamento final
         with st.form("perfil_horarios_form"):
             st.markdown("### ⏱️ Configuração de Horários")
             new_schedule = {}
-            
             def to_time(s): return datetime.strptime(s, '%H:%M').time()
 
             if not dias_f:
-                st.warning("Selecione os dias acima para configurar os horários.")
+                st.warning("Selecione os dias acima.")
             else:
                 for dia in dias_f:
                     with st.expander(f"📅 Horários de: {dia}", expanded=True):
                         c1, c2, c3 = st.columns(3)
                         current_d = sched.get(dia, {"ent": "08:00", "sai": "18:00", "int": "01:00"})
-                        
                         ent_val = c1.time_input(f"Entrada", value=to_time(current_d['ent']), key=f"ent_{dia}")
                         sai_val = c2.time_input(f"Saída", value=to_time(current_d['sai']), key=f"sai_{dia}")
                         int_val = c3.time_input(f"Intervalo", value=to_time(current_d['int']), key=f"int_{dia}")
-                        
-                        new_schedule[dia] = {
-                            "ent": ent_val.strftime('%H:%M'),
-                            "sai": sai_val.strftime('%H:%M'),
-                            "int": int_val.strftime('%H:%M')
-                        }
+                        new_schedule[dia] = {"ent": ent_val.strftime('%H:%M'), "sai": sai_val.strftime('%H:%M'), "int": int_val.strftime('%H:%M')}
 
-            submitted = st.form_submit_button("Salvar Minha Rotina Atlas")
-            
-            if submitted:
-                updated_profile = {
-                    "renda": renda_input,
-                    "work_days": dias_f,
-                    "daily_schedule": new_schedule
-                }
+            if st.form_submit_button("Salvar Minha Rotina Atlas"):
+                updated_profile = {"renda": renda_input, "work_days": dias_f, "daily_schedule": new_schedule}
                 save_user_profile(st.session_state.username, updated_profile, st.session_state.protector)
                 st.success("Rotina atualizada!")
                 st.rerun()
         
         if valor_hora > 0:
-            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}", help=f"Calculado sobre {horas_mensais:.1f}h mensais.")
+            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}")
 
     elif menu == "Choque Consciente":
         st.title("🍦 Quanto da sua vida isso custa?")
@@ -276,8 +294,7 @@ else:
         
         if v_compra > 0:
             total_h = v_compra / valor_hora if valor_hora > 0 else 0
-            h = int(total_h)
-            m = int((total_h - h) * 60)
+            h, m = int(total_h), int((total_h - int(total_h)) * 60)
             
             st.markdown(f"""
                 <div style="background-color: #1f2937; padding: 30px; border-radius: 15px; border-left: 8px solid #ef4444;">
@@ -286,39 +303,60 @@ else:
                 </div>
             """, unsafe_allow_html=True)
             
-            if st.button("Registrar como Gasto"):
+            if st.button("Registrar como Gasto Consciente"):
                 tid = str(datetime.now().timestamp())
-                item = {
-                    "id": tid, "data": datetime.now().isoformat(),
-                    "tipo": "Saída", "categoria": "Consciência", "valor": v_compra,
-                    "descricao": "Gasto consciente", "tempo": f"{h}h {m}m"
-                }
+                item = {"id": tid, "data": datetime.now().isoformat(), "tipo": "Saída", "categoria": "Lazer", "valor": v_compra, "descricao": "Gasto consciente", "tempo": f"{h}h {m}m"}
                 save_financial_item(st.session_state.username, item, st.session_state.protector)
-                st.toast("Registrado com sucesso!", icon="✅")
+                st.toast("Registrado!", icon="✅")
 
     elif menu == "Extrato de Vida":
-        st.title("📜 Histórico de Tempo e Dinheiro")
+        st.title("📜 Gestão Financeira")
         
-        tab_list, tab_add = st.tabs(["Lista de Registros", "+ Adicionar Entrada/Saída"])
+        tab_list, tab_add, tab_balanco = st.tabs(["Registros", "+ Novo Lançamento", "⚖️ Ajuste de Balanço"])
         
+        with tab_balanco:
+            st.subheader("Correção de Saldo")
+            st.write("Se o saldo real não bate com o app, use isso para criar uma entrada/saída de ajuste.")
+            with st.form("balanco_form"):
+                valor_ajuste = st.number_input("Valor da Diferença (R$)", min_value=0.0)
+                tipo_ajuste = st.selectbox("Ação", ["Ajuste Positivo (Entrada)", "Ajuste Negativo (Saída)"])
+                if st.form_submit_button("Aplicar Correção"):
+                    tid = str(datetime.now().timestamp())
+                    t_aj = "Entrada" if "Positivo" in tipo_ajuste else "Saída"
+                    total_h = valor_ajuste / valor_hora if valor_hora > 0 and t_aj == "Saída" else 0
+                    tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if t_aj == "Saída" else "-"
+                    item = {"id": tid, "data": datetime.now().isoformat(), "tipo": t_aj, "categoria": "Ajuste", "valor": valor_ajuste, "descricao": "Correção de Balanço", "tempo": tempo}
+                    save_financial_item(st.session_state.username, item, st.session_state.protector)
+                    st.success("Balanço ajustado!")
+                    st.rerun()
+
         with tab_add:
+            edit_mode = st.session_state.editing_item is not None
+            current_edit = st.session_state.editing_item
+            
+            st.subheader("Editar Registro" if edit_mode else "Novo Lançamento")
             with st.form("trans_form"):
                 c1, c2, c3 = st.columns(3)
-                tt = c1.selectbox("Tipo", ["Entrada", "Saída"])
-                cat = c2.selectbox("Categoria", ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Outros"])
-                val = c3.number_input("Valor R$", min_value=0.0)
-                desc = st.text_input("Descrição")
-                if st.form_submit_button("Salvar Registro"):
-                    tid = str(datetime.now().timestamp())
+                tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=0 if not edit_mode or current_edit['tipo'] == "Entrada" else 1)
+                cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Ajuste", "Outros"]
+                cat_idx = cat_list.index(current_edit['categoria']) if edit_mode and current_edit['categoria'] in cat_list else 4
+                cat = c2.selectbox("Categoria", cat_list, index=cat_idx)
+                val = c3.number_input("Valor R$", min_value=0.0, value=float(current_edit['valor']) if edit_mode else 0.0)
+                desc = st.text_input("Descrição", value=current_edit['descricao'] if edit_mode else "")
+                
+                b1, b2 = st.columns([1, 4])
+                if b1.form_submit_button("Salvar"):
+                    tid = current_edit['id'] if edit_mode else str(datetime.now().timestamp())
                     total_h = val / valor_hora if valor_hora > 0 and tt == "Saída" else 0
                     tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if tt == "Saída" else "-"
-                    item = {
-                        "id": tid, "data": datetime.now().isoformat(),
-                        "tipo": tt, "categoria": cat, "valor": val,
-                        "descricao": desc, "tempo": tempo
-                    }
+                    item = {"id": tid, "data": current_edit['data'] if edit_mode else datetime.now().isoformat(), "tipo": tt, "categoria": cat, "valor": val, "descricao": desc, "tempo": tempo}
                     save_financial_item(st.session_state.username, item, st.session_state.protector)
+                    st.session_state.editing_item = None
                     st.rerun()
+                if edit_mode:
+                    if b2.form_submit_button("Cancelar Edição"):
+                        st.session_state.editing_item = None
+                        st.rerun()
 
         with tab_list:
             items = get_financial_items(st.session_state.username, st.session_state.protector)
@@ -326,7 +364,7 @@ else:
                 df = pd.DataFrame(items).sort_values(by="id", ascending=False)
                 for _, row in df.iterrows():
                     with st.container(border=True):
-                        col1, col2, col3 = st.columns([4, 2, 1])
+                        col1, col2, col3, col4 = st.columns([4, 2, 1, 1])
                         color = "green" if row['tipo'] == "Entrada" else "red"
                         col1.markdown(f"**{row['descricao'] or row['categoria']}**")
                         col1.caption(f"{row['data'][:10]} | {row['categoria']}")
@@ -338,7 +376,11 @@ else:
                         else:
                             col2.markdown(f"<span style='color:{color}'>+{txt_valor}</span>", unsafe_allow_html=True)
                         
-                        if col3.button("🗑️", key=f"del_{row['id']}"):
+                        if col3.button("✏️", key=f"edit_{row['id']}"):
+                            st.session_state.editing_item = row
+                            st.rerun()
+                            
+                        if col4.button("🗑️", key=f"del_{row['id']}"):
                             delete_financial_item(row['id'])
                             st.rerun()
             else:
