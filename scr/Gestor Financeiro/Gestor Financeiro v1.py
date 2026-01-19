@@ -76,7 +76,6 @@ def get_user_profile(username, protector):
     if res and res[0]:
         dec = protector.decrypt(res[0])
         return json.loads(dec) if dec else {}
-    # Perfil padrão com horários flexíveis iniciais
     return {
         "renda": 0.0, 
         "work_days": ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"],
@@ -128,7 +127,6 @@ def calculate_hours(ent_str, sai_str, int_str):
         fmt = '%H:%M'
         t1 = datetime.strptime(ent_str, fmt)
         t2 = datetime.strptime(sai_str, fmt)
-        # Intervalo tratado como duração
         tint = datetime.strptime(int_str, fmt)
         intervalo_decimal = tint.hour + tint.minute / 60.0
         
@@ -168,20 +166,19 @@ if not st.session_state.logged_in:
             if st.button("Registrar", use_container_width=True):
                 p_hash = bcrypt.hashpw(np.encode(), bcrypt.gensalt()).decode()
                 tp = DataProtector(np)
-                prof = get_user_profile(nu, tp) # Pega o default
+                prof = get_user_profile(nu, tp)
                 enc_p = tp.encrypt(json.dumps(prof))
                 conn = sqlite3.connect(DB_FILE)
                 try:
                     conn.execute("INSERT INTO users (username, password_hash, encrypted_profile) VALUES (?, ?, ?)", (nu, p_hash, enc_p))
                     conn.commit(); st.success("Conta criada!")
-                except Exception as e: st.error(f"Usuário já existe ou erro: {e}")
+                except Exception as e: st.error(f"Usuário já existe ou erro.")
                 finally: conn.close()
 
 else:
-    # --- LOGADO ---
     profile = get_user_profile(st.session_state.username, st.session_state.protector)
     
-    # Cálculo automático de horas baseado no perfil flexível
+    # Cálculo das horas
     horas_semanais = 0
     sched = profile.get('daily_schedule', {})
     work_days = profile.get('work_days', [])
@@ -206,53 +203,72 @@ else:
         st.title("⚙️ Configuração de Vida")
         st.info("Personalize cada dia da sua semana para um cálculo de tempo ultra-preciso.")
         
-        with st.form("perfil_form_v2"):
-            renda_f = st.number_input("Renda Mensal Líquida (R$)", value=float(profile.get('renda', 0)), step=100.0)
-            
-            st.markdown("### 🗓️ Seletor de Dias")
-            dias_opcoes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
-            dias_f = st.multiselect("Em quais dias você trabalha?", options=dias_opcoes, default=work_days)
-            
-            st.markdown("### ⏱️ Horários por Dia")
+        # Usamos uma lógica fora do form para o multiselect ser reativo
+        renda_input = st.number_input("Renda Mensal Líquida (R$)", value=float(profile.get('renda', 0)), step=100.0)
+        
+        st.markdown("### 🗓️ Seletor de Dias")
+        dias_opcoes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+        
+        col_sel_1, col_sel_2 = st.columns([3, 1])
+        with col_sel_2:
+            if st.button("Todos os Dias"):
+                st.session_state.work_days_buffer = dias_opcoes
+                st.rerun()
+            if st.button("Limpar Seleção"):
+                st.session_state.work_days_buffer = []
+                st.rerun()
+
+        if 'work_days_buffer' not in st.session_state:
+            st.session_state.work_days_buffer = work_days
+
+        dias_f = st.multiselect(
+            "Em quais dias você trabalha?", 
+            options=dias_opcoes, 
+            default=st.session_state.work_days_buffer,
+            key="ms_work_days"
+        )
+        # Sincroniza o buffer com o widget
+        st.session_state.work_days_buffer = dias_f
+
+        # Iniciamos o formulário apenas para o salvamento final
+        with st.form("perfil_horarios_form"):
+            st.markdown("### ⏱️ Configuração de Horários")
             new_schedule = {}
             
             def to_time(s): return datetime.strptime(s, '%H:%M').time()
 
             if not dias_f:
-                st.warning("Selecione pelo menos um dia de trabalho.")
+                st.warning("Selecione os dias acima para configurar os horários.")
             else:
                 for dia in dias_f:
-                    st.write(f"**{dia}**")
-                    c1, c2, c3 = st.columns(3)
-                    
-                    # Carrega valores existentes ou defaults
-                    current_d = sched.get(dia, {"ent": "08:00", "sai": "18:00", "int": "01:00"})
-                    
-                    ent_val = c1.time_input(f"Entrada ({dia})", value=to_time(current_d['ent']), key=f"ent_{dia}")
-                    sai_val = c2.time_input(f"Saída ({dia})", value=to_time(current_d['sai']), key=f"sai_{dia}")
-                    int_val = c3.time_input(f"Intervalo ({dia})", value=to_time(current_d['int']), key=f"int_{dia}")
-                    
-                    new_schedule[dia] = {
-                        "ent": ent_val.strftime('%H:%M'),
-                        "sai": sai_val.strftime('%H:%M'),
-                        "int": int_val.strftime('%H:%M')
-                    }
-                    st.divider()
+                    with st.expander(f"📅 Horários de: {dia}", expanded=True):
+                        c1, c2, c3 = st.columns(3)
+                        current_d = sched.get(dia, {"ent": "08:00", "sai": "18:00", "int": "01:00"})
+                        
+                        ent_val = c1.time_input(f"Entrada", value=to_time(current_d['ent']), key=f"ent_{dia}")
+                        sai_val = c2.time_input(f"Saída", value=to_time(current_d['sai']), key=f"sai_{dia}")
+                        int_val = c3.time_input(f"Intervalo", value=to_time(current_d['int']), key=f"int_{dia}")
+                        
+                        new_schedule[dia] = {
+                            "ent": ent_val.strftime('%H:%M'),
+                            "sai": sai_val.strftime('%H:%M'),
+                            "int": int_val.strftime('%H:%M')
+                        }
 
             submitted = st.form_submit_button("Salvar Minha Rotina Atlas")
             
             if submitted:
                 updated_profile = {
-                    "renda": renda_f,
+                    "renda": renda_input,
                     "work_days": dias_f,
                     "daily_schedule": new_schedule
                 }
                 save_user_profile(st.session_state.username, updated_profile, st.session_state.protector)
-                st.success("Rotina atualizada com sucesso!")
+                st.success("Rotina atualizada!")
                 st.rerun()
         
         if valor_hora > 0:
-            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}", help=f"Baseado em {horas_mensais:.1f} horas mensais calculadas.")
+            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}", help=f"Calculado sobre {horas_mensais:.1f}h mensais.")
 
     elif menu == "Choque Consciente":
         st.title("🍦 Quanto da sua vida isso custa?")
