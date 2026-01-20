@@ -26,6 +26,169 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import plotly.express as px
 import plotly.graph_objects as go
 
+from io import BytesIO
+
+# PDF (ReportLab)
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
+
+# ---------------------------
+# EXPORTAÇÕES
+# ---------------------------
+
+def _brl(v: float) -> str:
+    try:
+        s = f"{float(v):,.2f}"
+        # 1.234,56 (pt-br)
+        s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {s}"
+    except Exception:
+        return "R$ 0,00"
+
+
+def build_transactions_pdf(
+    df: pd.DataFrame,
+    username: str,
+    period_label: str,
+    keyword_label: str,
+) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.6 * cm,
+        rightMargin=1.6 * cm,
+        topMargin=1.4 * cm,
+        bottomMargin=1.4 * cm,
+        title="Atlas Life — Exportação de Transações",
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    title = Paragraph("<b>Atlas Life — Transações (Exportação)</b>", styles["Title"])
+    meta = Paragraph(
+        f"Usuário: <b>{username}</b><br/>"
+        f"Período: <b>{period_label}</b><br/>"
+        f"Palavra-chave: <b>{keyword_label}</b>",
+        styles["Normal"],
+    )
+
+    story.append(title)
+    story.append(Spacer(1, 10))
+    story.append(meta)
+    story.append(Spacer(1, 12))
+
+    if df is None or df.empty:
+        story.append(Paragraph("Nenhuma transação encontrada para os filtros selecionados.", styles["Normal"]))
+        doc.build(story)
+        return buf.getvalue()
+
+    # prepara colunas e ordenação amigável
+    dfp = df.copy()
+    if "data_fmt" in dfp.columns:
+        dfp = dfp.sort_values(by="data_fmt", ascending=False)
+
+    # Limite de linhas para não explodir PDF
+    max_rows = 400
+    truncated = False
+    if len(dfp) > max_rows:
+        dfp = dfp.head(max_rows).copy()
+        truncated = True
+
+    # resumo
+    try:
+        entradas = dfp[dfp["tipo"] == "Entrada"]["valor"].astype(float).sum()
+        saidas = dfp[dfp["tipo"] == "Saída"]["valor"].astype(float).sum()
+        balanco = entradas - saidas
+    except Exception:
+        entradas = saidas = balanco = 0.0
+
+    resumo = Paragraph(
+        f"<b>Resumo (no período exportado):</b> "
+        f"Entradas: <b>{_brl(entradas)}</b> | "
+        f"Saídas: <b>{_brl(saidas)}</b> | "
+        f"Balanço: <b>{_brl(balanco)}</b>",
+        styles["Normal"],
+    )
+    story.append(resumo)
+    if truncated:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"<i>Obs.: PDF limitado a {max_rows} linhas (para performance).</i>", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    # tabela
+    cols = ["data", "tipo", "categoria", "descricao", "valor", "tempo"]
+    for c in cols:
+        if c not in dfp.columns:
+            dfp[c] = ""
+
+    table_data = [["Data", "Tipo", "Categoria", "Descrição", "Valor", "Tempo"]]
+    for _, r in dfp.iterrows():
+        data_txt = str(r.get("data", ""))[:10]
+        tipo = str(r.get("tipo", ""))
+        cat = str(r.get("categoria", ""))
+        desc = str(r.get("descricao", ""))
+        val = _brl(r.get("valor", 0.0))
+        tempo = str(r.get("tempo", "-"))
+        table_data.append([data_txt, tipo, cat, desc, val, tempo])
+
+    tbl = Table(table_data, colWidths=[2.1*cm, 2.0*cm, 3.0*cm, 7.4*cm, 2.6*cm, 2.2*cm])
+
+    # Estilo base (claro e legível)
+    style = TableStyle([
+        # Cabeçalho
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+
+        # Corpo (fundo claro + texto escuro)
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
+        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+
+        # Alinhamentos
+        ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+        ("ALIGN", (4, 1), (4, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+
+        # “Espaçamento” pra respirar
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+
+        # Bordas leves
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1d5db")),
+    ])
+
+    # Colorir "Tipo" e "Valor" por linha (Entrada verde, Saída vermelho)
+    for i in range(1, len(table_data)):  # começa em 1 porque 0 é o header
+        tipo_txt = str(table_data[i][1]).strip().lower()
+        if "entrada" in tipo_txt:
+            cor = colors.HexColor("#16a34a")  # verde
+        else:
+            cor = colors.HexColor("#dc2626")  # vermelho
+
+        # coluna "Tipo"
+        style.add("TEXTCOLOR", (1, i), (1, i), cor)
+        style.add("FONTNAME", (1, i), (1, i), "Helvetica-Bold")
+
+        # coluna "Valor"
+        style.add("TEXTCOLOR", (4, i), (4, i), cor)
+        style.add("FONTNAME", (4, i), (4, i), "Helvetica-Bold")
+
+    tbl.setStyle(style)
+    story.append(tbl)
+
+    doc.build(story)
+    return buf.getvalue()
+
 # ---------------------------
 # CONFIGURAÇÕES
 # ---------------------------
@@ -917,6 +1080,85 @@ def do_main_app():
 
                 # ordena mais recente primeiro (por data)
                 df = df.sort_values(by="data_fmt", ascending=False).reset_index(drop=True)
+
+                # ----------------------------
+                # EXPORTAÇÃO (CSV / Excel / PDF)
+                # ----------------------------
+                with st.expander("⬇️ Exportar resultados", expanded=False):
+
+                    # monta labels de filtro (mesmo se não tiver itens)
+                    period_label = "-"
+                    keyword_label = "-"
+                    try:
+                        if not df_all.empty:
+                            period_label = f"{start_d.strftime('%d/%m/%Y')} → {end_d.strftime('%d/%m/%Y')}"
+                            keyword_label = (q if q else "(vazio)")
+                    except Exception:
+                        pass
+
+                    if df is None or df.empty:
+                        st.info("Aplique filtros e/ou adicione transações para habilitar exportação.")
+                    else:
+                        # DataFrame para exportar (remove colunas internas)
+                        df_export = df.copy()
+                        if "data_fmt" in df_export.columns:
+                            df_export = df_export.drop(columns=["data_fmt"], errors="ignore")
+
+                        # ordena e seleciona colunas mais úteis
+                        cols_pref = ["data", "tipo", "categoria", "descricao", "valor", "tempo", "id"]
+                        cols_final = [c for c in cols_pref if c in df_export.columns] + [c for c in df_export.columns if c not in cols_pref]
+                        df_export = df_export[cols_final]
+
+                        c1, c2, c3 = st.columns(3)
+
+                        # CSV
+                        csv_bytes = df_export.to_csv(index=False).encode("utf-8")
+                        with c1:
+                            st.download_button(
+                                "📄 Baixar CSV",
+                                data=csv_bytes,
+                                file_name=f"transacoes_{username}.csv",
+                                mime="text/csv",
+                                use_container_width=True,
+                            )
+
+                        # Excel
+                        xlsx_buf = BytesIO()
+                        with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
+                            df_export.to_excel(writer, index=False, sheet_name="Transacoes")
+                            # uma aba extra com filtros
+                            pd.DataFrame(
+                                {
+                                    "Filtro": ["Período", "Palavra-chave"],
+                                    "Valor": [period_label, keyword_label],
+                                }
+                            ).to_excel(writer, index=False, sheet_name="Filtros")
+                        with c2:
+                            st.download_button(
+                                "📊 Baixar Excel",
+                                data=xlsx_buf.getvalue(),
+                                file_name=f"transacoes_{username}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True,
+                            )
+
+                        # PDF (estilizado)
+                        pdf_bytes = build_transactions_pdf(
+                            df=df_export,
+                            username=username,
+                            period_label=period_label,
+                            keyword_label=keyword_label,
+                        )
+                        with c3:
+                            st.download_button(
+                                "🧾 Baixar PDF",
+                                data=pdf_bytes,
+                                file_name=f"transacoes_{username}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                            )
+
+                        st.caption(f"Exportando {len(df_export)} linha(s) | Período: {period_label} | Palavra-chave: {keyword_label}")
 
             else:
                 # ✅ Sem itens: DataFrame vazio (evita UnboundLocalError)

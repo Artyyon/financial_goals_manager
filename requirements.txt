@@ -5,3 +5,6 @@ cryptography
 plotly
 customtkinter
 matplotlib
+
+reportlab
+openpyxl
