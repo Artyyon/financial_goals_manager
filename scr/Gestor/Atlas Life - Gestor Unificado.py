@@ -491,7 +491,7 @@ def do_main_app():
             "Menu",
             [
                 "Visão Geral",
-                "Extrato de Vida",
+                "Transações",
                 "Choque Consciente",
                 "Gestão de Metas",
                 "Meu Perfil",
@@ -678,12 +678,42 @@ def do_main_app():
     # ---------------------------
     # EXTRATO (FINANCEIRO)
     # ---------------------------
-    elif menu == "Extrato de Vida":
-        st.title("📜 Gestão Financeira (Extrato)")
+    elif menu == "Transações":
+        st.title("💳 Transações")
+        st.caption("Entradas, saídas, ajustes e histórico do seu extrato.")
 
-        tab_list, tab_add, tab_balanco = st.tabs(["Registros", "+ Novo Lançamento", "⚖️ Ajuste de Balanço"])
+        # ----------------------------
+        # Aviso pós-salvamento (OK / Erro)
+        # ----------------------------
+        if "tx_last_result" in st.session_state and st.session_state.tx_last_result:
+            r = st.session_state.tx_last_result
+            if r.get("ok"):
+                st.success(r.get("msg", "Sucesso!"))
+            else:
+                st.error(r.get("msg", "Erro!"))
 
-        with tab_balanco:
+            if st.button("OK", key="tx_ok_btn"):
+                st.session_state.tx_last_result = None
+                st.session_state.tx_tab = "Registros"
+                st.rerun()
+
+            st.stop()
+
+        # ----------------------------
+        # Abas controladas por estado
+        # ----------------------------
+        if "tx_tab" not in st.session_state:
+            st.session_state.tx_tab = "Registros"
+
+        tabs = ["Registros", "Novo Lançamento", "Ajuste de Balanço"]
+        st.session_state.tx_tab = st.radio(
+            " ",
+            tabs,
+            horizontal=True,
+            key="tx_tab_radio",
+        )
+
+        if st.session_state.tx_tab == "Ajuste de Balanço":
             st.subheader("Correção de Saldo")
             with st.form("balanco_form"):
                 valor_ajuste = st.number_input("Valor da Diferença (R$)", min_value=0.0, step=10.0)
@@ -706,45 +736,99 @@ def do_main_app():
                     st.toast("Balanço atualizado com sucesso! ⚖️")
                     st.rerun()
 
-        with tab_add:
+        elif st.session_state.tx_tab == "Novo Lançamento":
             edit_mode = st.session_state.editing_item is not None
             current_edit = st.session_state.editing_item
 
             if edit_mode:
                 st.subheader(f"✏️ Editando: {current_edit.get('descricao') or current_edit.get('categoria')}")
                 st.info("Altere os campos e clique em Salvar para atualizar.")
+                tt_default = 0 if current_edit.get("tipo") == "Entrada" else 1
+                val_default = float(current_edit.get("valor", 0.0))
+                desc_default = current_edit.get("descricao", "")
             else:
                 st.subheader("🆕 Novo Lançamento")
+                tt_default = 0
+                val_default = 0.0
+                desc_default = ""
 
-            with st.form("trans_form", clear_on_submit=not edit_mode):
-                c1, c2, c3 = st.columns(3)
+            # ----------------------------
+            # Campos (SEM FORM)
+            # ----------------------------
+            c1, c2, c3 = st.columns(3)
+            tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=tt_default, key="tx_tipo")
 
-                if edit_mode:
-                    tt_default = 0 if current_edit.get("tipo") == "Entrada" else 1
-                    val_default = float(current_edit.get("valor", 0.0))
-                    desc_default = current_edit.get("descricao", "")
-                else:
-                    tt_default = 0
-                    val_default = 0.0
-                    desc_default = ""
+            cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Ajuste", "Outros"]
+            if edit_mode and current_edit.get("categoria") in cat_list:
+                cat_idx = cat_list.index(current_edit.get("categoria"))
+            else:
+                cat_idx = 4
 
-                tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=tt_default)
-                cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Ajuste", "Outros"]
-                if edit_mode and current_edit.get("categoria") in cat_list:
-                    cat_idx = cat_list.index(current_edit.get("categoria"))
-                else:
-                    cat_idx = 4
-                cat = c2.selectbox("Categoria", cat_list, index=cat_idx)
-                val = c3.number_input("Valor R$", min_value=0.0, value=val_default, step=10.0)
-                desc = st.text_input("Descrição", value=desc_default)
+            cat = c2.selectbox("Categoria", cat_list, index=cat_idx, key="tx_cat")
+            val = c3.number_input("Valor R$", min_value=0.0, value=val_default, step=10.0, key="tx_val")
+            desc = st.text_input("Descrição", value=desc_default, key="tx_desc")
 
-                b_save, b_cancel = st.columns([1, 4])
-                save_clicked = b_save.form_submit_button("Salvar")
+            # ============================
+            # PRÉVIA: SALDO ATUAL + IMPACTO + SALDO PROJETADO (SEM HTML)
+            # ============================
+            all_items = get_financial_items(username, protector)
+            saldo_atual = 0.0
 
-                if save_clicked:
+            if all_items:
+                df_tmp = pd.DataFrame(all_items)
+                if not df_tmp.empty:
+                    df_tmp["valor"] = pd.to_numeric(df_tmp["valor"], errors="coerce").fillna(0.0)
+
+                    # se estiver editando, remove a transação antiga do cálculo pra não duplicar
+                    if edit_mode and current_edit and current_edit.get("id") in df_tmp.get("id", []).tolist():
+                        df_tmp = df_tmp[df_tmp["id"] != current_edit.get("id")]
+
+                    entradas = df_tmp[df_tmp["tipo"] == "Entrada"]["valor"].sum()
+                    saidas = df_tmp[df_tmp["tipo"] == "Saída"]["valor"].sum()
+                    saldo_atual = float(entradas - saidas)
+
+            delta_prev = float(val) if tt == "Entrada" else -float(val)
+            saldo_projetado = saldo_atual + delta_prev
+
+            tempo_prev = "-"
+            if tt == "Saída" and valor_hora > 0 and val > 0:
+                total_h_prev = val / valor_hora
+                tempo_prev = f"{int(total_h_prev)}h {int((total_h_prev - int(total_h_prev)) * 60)}m"
+
+            with st.container(border=True):
+                st.markdown("### Impacto no saldo")
+                st.caption("Saldo atual → impacto do lançamento → saldo projetado.")
+
+                cA, cB, cC, cD = st.columns([2, 2, 2, 2])
+
+                cA.metric("Saldo atual", f"R$ {saldo_atual:,.2f}")
+
+                impact_color = "normal" if delta_prev >= 0 else "inverse"
+                impact_txt = f"+R$ {abs(delta_prev):,.2f}" if delta_prev >= 0 else f"-R$ {abs(delta_prev):,.2f}"
+                cB.metric("Impacto", f"R$ {delta_prev:,.2f}", delta=impact_txt, delta_color=impact_color)
+
+                proj_color = "normal" if saldo_projetado >= 0 else "inverse"
+                proj_delta = saldo_projetado - saldo_atual
+                proj_delta_txt = f"+R$ {abs(proj_delta):,.2f}" if proj_delta >= 0 else f"-R$ {abs(proj_delta):,.2f}"
+                cC.metric("Saldo projetado", f"R$ {saldo_projetado:,.2f}", delta=proj_delta_txt, delta_color=proj_color)
+
+                cD.metric("Tempo estimado", tempo_prev if tt == "Saída" else "-")
+
+            # ----------------------------
+            # Ações
+            # ----------------------------
+            b1, b2 = st.columns([1, 1])
+
+            if b1.button("Salvar", use_container_width=True, key="tx_save_btn"):
+                try:
+                    if float(val) <= 0:
+                        raise ValueError("O valor precisa ser maior que zero.")
+
                     tid = current_edit["id"] if edit_mode else str(datetime.now().timestamp())
+
                     total_h = (val / valor_hora) if (valor_hora > 0 and tt == "Saída") else 0
                     tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if tt == "Saída" else "-"
+
                     item = {
                         "id": tid,
                         "data": current_edit["data"] if edit_mode else datetime.now().isoformat(),
@@ -754,44 +838,136 @@ def do_main_app():
                         "descricao": desc,
                         "tempo": tempo,
                     }
+
                     save_financial_item(username, item, protector)
+
                     st.session_state.editing_item = None
-                    st.toast("Transação atualizada com sucesso! ✨" if edit_mode else "Transação registrada com sucesso! ✅")
+                    st.session_state.tx_last_result = {
+                        "ok": True,
+                        "msg": "Transação atualizada com sucesso! ✨" if edit_mode else "Transação registrada com sucesso! ✅",
+                    }
+                    st.session_state.tx_tab = "Registros"
                     st.rerun()
 
-                if edit_mode:
-                    if b_cancel.form_submit_button("Cancelar Edição"):
-                        st.session_state.editing_item = None
-                        st.rerun()
+                except Exception as e:
+                    st.session_state.tx_last_result = {"ok": False, "msg": f"Erro ao salvar: {e}"}
+                    st.rerun()
 
-        with tab_list:
+            if edit_mode:
+                if b2.button("Cancelar Edição", use_container_width=True, key="tx_cancel_btn"):
+                    st.session_state.editing_item = None
+                    st.rerun()
+
+
+        else:  # "Registros"
             items = get_financial_items(username, protector)
-            if items:
-                df = pd.DataFrame(items).sort_values(by="id", ascending=False)
+
+            # ----------------------------
+            # FILTROS (consulta)
+            # ----------------------------
+            st.subheader("🔎 Consulta")
+            f1, f2, f3 = st.columns([2, 2, 3])
+
+            df_all = pd.DataFrame(items) if items else pd.DataFrame()
+
+            if not df_all.empty:
+                df_all["data_fmt"] = pd.to_datetime(df_all["data"], errors="coerce")
+                df_all = df_all.dropna(subset=["data_fmt"]).copy()
+
+                min_d = df_all["data_fmt"].min().date()
+                max_d = df_all["data_fmt"].max().date()
+
+                with f1:
+                    start_d = st.date_input(
+                        "Início",
+                        value=min_d,
+                        min_value=min_d,
+                        max_value=max_d,
+                        key="tx_filter_start",
+                    )
+                with f2:
+                    end_d = st.date_input(
+                        "Fim",
+                        value=max_d,
+                        min_value=min_d,
+                        max_value=max_d,
+                        key="tx_filter_end",
+                    )
+                with f3:
+                    q = st.text_input(
+                        "Palavra-chave (descrição/categoria/tipo)",
+                        key="tx_filter_q",
+                    ).strip().lower()
+
+                start_ts = pd.to_datetime(start_d)
+                end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+                df = df_all[(df_all["data_fmt"] >= start_ts) & (df_all["data_fmt"] <= end_ts)].copy()
+
+                if q:
+                    def _match(row):
+                        fields = [
+                            str(row.get("descricao", "")),
+                            str(row.get("categoria", "")),
+                            str(row.get("tipo", "")),
+                        ]
+                        return any(q in f.lower() for f in fields)
+
+                    df = df[df.apply(_match, axis=1)]
+
+                # ordena mais recente primeiro (por data)
+                df = df.sort_values(by="data_fmt", ascending=False).reset_index(drop=True)
+
+            else:
+                # ✅ Sem itens: DataFrame vazio (evita UnboundLocalError)
+                df = pd.DataFrame()
+
+            # ----------------------------
+            # LISTAGEM
+            # ----------------------------
+            if df.empty:
+                st.info("Nenhuma transação encontrada para os filtros selecionados.")
+            else:
                 for _, row in df.iterrows():
                     with st.container(border=True):
                         col1, col2, col3, col4 = st.columns([4, 2, 0.5, 0.5])
-                        color = "green" if row["tipo"] == "Entrada" else "red"
-                        col1.markdown(f"**{row.get('descricao') or row.get('categoria')}**")
-                        col1.caption(f"{str(row.get('data',''))[:10]} | {row.get('categoria')}")
 
-                        txt_valor = f"R$ {float(row.get('valor',0.0)):,.2f}"
-                        if row["tipo"] == "Saída":
+                        tipo = row.get("tipo", "")
+                        color = "green" if tipo == "Entrada" else "red"
+
+                        titulo = row.get("descricao") or row.get("categoria") or "(sem descrição)"
+                        data_txt = str(row.get("data", ""))[:10]
+                        categoria = row.get("categoria", "-")
+
+                        col1.markdown(f"**{titulo}**")
+                        col1.caption(f"{data_txt} | {categoria}")
+
+                        txt_valor = f"R$ {float(row.get('valor', 0.0)):,.2f}"
+                        if tipo == "Saída":
                             col2.markdown(f"<span style='color:{color}'>-{txt_valor}</span>", unsafe_allow_html=True)
-                            col2.caption(f"⌛ {row.get('tempo','-')}")
+                            col2.caption(f"⌛ {row.get('tempo', '-')}")
                         else:
                             col2.markdown(f"<span style='color:{color}'>+{txt_valor}</span>", unsafe_allow_html=True)
 
                         if col3.button("✏️", key=f"edit_{row['id']}"):
-                            st.session_state.editing_item = dict(row)
+                            st.session_state.editing_item = {
+                                "id": row["id"],
+                                "data": row.get("data"),
+                                "tipo": row.get("tipo"),
+                                "categoria": row.get("categoria"),
+                                "valor": float(row.get("valor", 0.0)),
+                                "descricao": row.get("descricao", ""),
+                                "tempo": row.get("tempo", "-"),
+                            }
+                            st.session_state.tx_tab = "Novo Lançamento"
                             st.rerun()
 
                         if col4.button("🗑️", key=f"del_{row['id']}"):
                             delete_financial_item(row["id"])
-                            st.toast("Registro excluído com sucesso! 🗑️")
+                            st.session_state.tx_last_result = {"ok": True, "msg": "Transação excluída com sucesso! 🗑️"}
+                            st.session_state.tx_tab = "Registros"
                             st.rerun()
-            else:
-                st.info("Nenhum registro encontrado.")
+
 
     # ---------------------------
     # CHOQUE CONSCIENTE (FINANCEIRO)
