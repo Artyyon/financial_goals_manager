@@ -758,7 +758,7 @@ def do_main_app():
             c1, c2, c3 = st.columns(3)
             tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=tt_default, key="tx_tipo")
 
-            cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Ajuste", "Outros"]
+            cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Outros"]
             if edit_mode and current_edit.get("categoria") in cat_list:
                 cat_idx = cat_list.index(current_edit.get("categoria"))
             else:
