@@ -516,80 +516,162 @@ def do_main_app():
             df = pd.DataFrame(items)
             df["valor"] = df["valor"].astype(float)
 
-            ent_total = df[df["tipo"] == "Entrada"]["valor"].sum()
-            sai_total = df[df["tipo"] == "Saída"]["valor"].sum()
+            # ============================
+            # SELETOR DE TEMPO (Visão Geral)
+            # ============================
+            df["data_fmt"] = pd.to_datetime(df["data"], errors="coerce")
+            df = df.dropna(subset=["data_fmt"]).copy()
+
+            # Estado do filtro (mantém escolha ao navegar)
+            if "vg_time_mode" not in st.session_state:
+                st.session_state.vg_time_mode = "Mensal"
+            if "vg_custom_start" not in st.session_state:
+                st.session_state.vg_custom_start = df["data_fmt"].min().date()
+            if "vg_custom_end" not in st.session_state:
+                st.session_state.vg_custom_end = df["data_fmt"].max().date()
+
+            with st.container(border=True):
+                st.subheader("🗓️ Período de exibição")
+                ctm1, ctm2, ctm3 = st.columns([2, 2, 3])
+
+                with ctm1:
+                    options = ["Diário", "Semanal", "Mensal", "Anual", "Personalizado"]
+                    # o selectbox vai controlar st.session_state["vg_time_mode"]
+                    time_mode = st.selectbox(
+                        "Granularidade",
+                        options,
+                        key="vg_time_mode",
+                    )
+
+                # Intervalo (range) usado para filtrar tudo na página
+                min_d = df["data_fmt"].min().date()
+                max_d = df["data_fmt"].max().date()
+
+                if time_mode == "Personalizado":
+                    with ctm2:
+                        start_d = st.date_input("Início", value=st.session_state.vg_custom_start, min_value=min_d, max_value=max_d)
+                    with ctm3:
+                        end_d = st.date_input("Fim", value=st.session_state.vg_custom_end, min_value=min_d, max_value=max_d)
+
+                    # guarda
+                    st.session_state.vg_custom_start = start_d
+                    st.session_state.vg_custom_end = end_d
+
+                    start_ts = pd.to_datetime(start_d)
+                    end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                else:
+                    # “Janelas prontas” (você pode ajustar depois)
+                    now = df["data_fmt"].max()
+                    if time_mode == "Diário":
+                        start_ts = now.normalize()  # hoje
+                    elif time_mode == "Semanal":
+                        start_ts = (now - pd.Timedelta(days=6)).normalize()  # últimos 7 dias
+                    elif time_mode == "Mensal":
+                        start_ts = (now - pd.Timedelta(days=30)).normalize()  # últimos 30 dias
+                    elif time_mode == "Anual":
+                        start_ts = (now - pd.Timedelta(days=365)).normalize()  # últimos 12 meses
+                    end_ts = now
+
+            # Filtra tudo da página
+            df_vg = df[(df["data_fmt"] >= start_ts) & (df["data_fmt"] <= end_ts)].copy()
+
+            # Se ficar vazio, avisa e não quebra gráficos
+            if df_vg.empty:
+                st.info("Sem transações no período selecionado.")
+                return
+
+            # ============================
+            # Normaliza impacto (delta) e agrega por período (para os gráficos)
+            # ============================
+            df_vg["delta"] = df_vg["valor"].astype(float)
+            df_vg.loc[df_vg["tipo"] == "Saída", "delta"] = -df_vg.loc[df_vg["tipo"] == "Saída", "delta"].abs()
+            df_vg.loc[df_vg["tipo"] == "Entrada", "delta"] = df_vg.loc[df_vg["tipo"] == "Entrada", "delta"].abs()
+
+            # Mapeia granularidade -> frequência pandas
+            freq_map = {
+                "Diário": "D",
+                "Semanal": "W",
+                "Mensal": "M",
+                "Anual": "Y",
+                "Personalizado": "M",  # no personalizado, vamos usar mensal como padrão (ajustável depois)
+            }
+            freq = freq_map.get(time_mode, "M")
+
+            ent_total = df_vg[df_vg["tipo"] == "Entrada"]["valor"].sum()
+            sai_total = df_vg[df_vg["tipo"] == "Saída"]["valor"].sum()
             balanco = ent_total - sai_total
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Entradas", f"R$ {ent_total:,.2f}")
-            c2.metric("Saídas", f"R$ {sai_total:,.2f}", delta=f"-{sai_total:,.2f}", delta_color="inverse")
-            c3.metric("Balanço Atual", f"R$ {balanco:,.2f}", delta=f"{balanco:,.2f}")
+
+            # Saídas: sempre “ruim” (vermelho). Usamos inverse pra seta ir pra baixo/vermelho.
+            c2.metric(
+                "Saídas",
+                f"R$ {sai_total:,.2f}",
+                delta=f"-{sai_total:,.2f}",
+                delta_color="inverse",
+            )
+
+            # Balanço: verde quando positivo, vermelho quando negativo
+            bal_delta_color = "normal" if balanco >= 0 else "inverse"
+            bal_delta_txt = f"+{balanco:,.2f}" if balanco >= 0 else f"{balanco:,.2f}"
+
+            c3.metric(
+                "Balanço Atual",
+                f"R$ {balanco:,.2f}",
+                delta=bal_delta_txt,
+                delta_color=bal_delta_color,
+            )
 
             st.divider()
 
             g1, g2 = st.columns(2)
-            df_sai = df[df["tipo"] == "Saída"]
+            df_sai = df_vg[df_vg["tipo"] == "Saída"]
             if not df_sai.empty:
                 fig_cat = px.pie(df_sai, values="valor", names="categoria", title="Distribuição de Gastos", hole=.4)
                 g1.plotly_chart(fig_cat, use_container_width=True)
             else:
                 g1.info("Sem dados de saída para exibir gráfico.")
 
-            # --- NOVO GRÁFICO: PATRIMÔNIO (SALDO ACUMULADO) POR TRANSAÇÃO ---
-            df["data_fmt"] = pd.to_datetime(df["data"], errors="coerce")
-            df = df.dropna(subset=["data_fmt"]).copy()
+            # --- GRÁFICO: PATRIMÔNIO POR PERÍODO (suaviza oscilações) ---
+            # Agrega delta por período e cria patrimônio acumulado por período
+            df_period = (
+                df_vg.set_index("data_fmt")
+                    .groupby(pd.Grouper(freq=freq))["delta"]
+                    .sum()
+                    .reset_index()
+                    .rename(columns={"data_fmt": "periodo", "delta": "delta_periodo"})
+            )
 
-            # Ordena cronologicamente (por data e por id como desempate)
-            df = df.sort_values(["data_fmt", "id"]).reset_index(drop=True)
-
-            # Normaliza valor para impacto no patrimônio:
-            # Entrada soma, Saída subtrai
-            df["delta"] = df["valor"].astype(float)
-            df.loc[df["tipo"] == "Saída", "delta"] = -df.loc[df["tipo"] == "Saída", "delta"].abs()
-            df.loc[df["tipo"] == "Entrada", "delta"] = df.loc[df["tipo"] == "Entrada", "delta"].abs()
-
-            # Patrimônio acumulado
-            df["patrimonio"] = df["delta"].cumsum()
-
-            # Eixo X como "ponto" (cada transação)
-            df["n"] = range(1, len(df) + 1)
+            df_period["patrimonio"] = df_period["delta_periodo"].cumsum()
 
             fig_evol = go.Figure()
-
-            # Linha do patrimônio
             fig_evol.add_trace(
                 go.Scatter(
-                    x=df["n"],
-                    y=df["patrimonio"],
+                    x=df_period["periodo"],
+                    y=df_period["patrimonio"],
                     mode="lines+markers",
                     name="Patrimônio (acumulado)",
-                    customdata=df[["data_fmt", "tipo", "categoria", "valor", "delta", "descricao"]],
+                    customdata=df_period[["delta_periodo"]],
                     hovertemplate=(
-                        "<b>Transação #%{x}</b><br>"
+                        "<b>%{x|%d/%m/%Y}</b><br>"
                         "Patrimônio: R$ %{y:,.2f}<br>"
-                        "Data: %{customdata[0]|%d/%m/%Y %H:%M}<br>"
-                        "Tipo: %{customdata[1]}<br>"
-                        "Categoria: %{customdata[2]}<br>"
-                        "Valor: R$ %{customdata[3]:,.2f}<br>"
-                        "Impacto: R$ %{customdata[4]:,.2f}<br>"
-                        "Desc: %{customdata[5]}<extra></extra>"
+                        "Variação no período: R$ %{customdata[0]:,.2f}<extra></extra>"
                     ),
                     fill="tozeroy",
                 )
             )
 
-            # Linha de referência no zero
             fig_evol.add_hline(y=0)
 
             fig_evol.update_layout(
-                title="Patrimônio por transação (saldo acumulado do extrato)",
+                title=f"Patrimônio acumulado — {time_mode}",
                 hovermode="x unified",
-                xaxis_title="Ordem das transações",
+                xaxis_title="Período",
                 yaxis_title="R$",
             )
 
             g2.plotly_chart(fig_evol, use_container_width=True)
-
         else:
             st.info("Adicione registros no Extrato para ver o dashboard.")
 
