@@ -535,10 +535,61 @@ def do_main_app():
             else:
                 g1.info("Sem dados de saída para exibir gráfico.")
 
+            # --- NOVO GRÁFICO: PATRIMÔNIO (SALDO ACUMULADO) POR TRANSAÇÃO ---
             df["data_fmt"] = pd.to_datetime(df["data"], errors="coerce")
-            df_evol = df.sort_values("data_fmt")
-            fig_evol = px.line(df_evol, x="data_fmt", y="valor", color="tipo", title="Evolução Financeira", markers=True)
+            df = df.dropna(subset=["data_fmt"]).copy()
+
+            # Ordena cronologicamente (por data e por id como desempate)
+            df = df.sort_values(["data_fmt", "id"]).reset_index(drop=True)
+
+            # Normaliza valor para impacto no patrimônio:
+            # Entrada soma, Saída subtrai
+            df["delta"] = df["valor"].astype(float)
+            df.loc[df["tipo"] == "Saída", "delta"] = -df.loc[df["tipo"] == "Saída", "delta"].abs()
+            df.loc[df["tipo"] == "Entrada", "delta"] = df.loc[df["tipo"] == "Entrada", "delta"].abs()
+
+            # Patrimônio acumulado
+            df["patrimonio"] = df["delta"].cumsum()
+
+            # Eixo X como "ponto" (cada transação)
+            df["n"] = range(1, len(df) + 1)
+
+            fig_evol = go.Figure()
+
+            # Linha do patrimônio
+            fig_evol.add_trace(
+                go.Scatter(
+                    x=df["n"],
+                    y=df["patrimonio"],
+                    mode="lines+markers",
+                    name="Patrimônio (acumulado)",
+                    customdata=df[["data_fmt", "tipo", "categoria", "valor", "delta", "descricao"]],
+                    hovertemplate=(
+                        "<b>Transação #%{x}</b><br>"
+                        "Patrimônio: R$ %{y:,.2f}<br>"
+                        "Data: %{customdata[0]|%d/%m/%Y %H:%M}<br>"
+                        "Tipo: %{customdata[1]}<br>"
+                        "Categoria: %{customdata[2]}<br>"
+                        "Valor: R$ %{customdata[3]:,.2f}<br>"
+                        "Impacto: R$ %{customdata[4]:,.2f}<br>"
+                        "Desc: %{customdata[5]}<extra></extra>"
+                    ),
+                    fill="tozeroy",
+                )
+            )
+
+            # Linha de referência no zero
+            fig_evol.add_hline(y=0)
+
+            fig_evol.update_layout(
+                title="Patrimônio por transação (saldo acumulado do extrato)",
+                hovermode="x unified",
+                xaxis_title="Ordem das transações",
+                yaxis_title="R$",
+            )
+
             g2.plotly_chart(fig_evol, use_container_width=True)
+
         else:
             st.info("Adicione registros no Extrato para ver o dashboard.")
 
