@@ -4,6 +4,7 @@
 # Como rodar:
 #   pip install streamlit pandas bcrypt cryptography plotly
 #   streamlit run Atlas_Life_v3_unificado.py
+#   streamlit run "scr\Gestor\Atlas Life - Gestor Unificado.py"
 #
 # Observação importante sobre dados antigos:
 # - Este app usa um NOVO banco SQLite por padrão: db/atlas_life_unified_v3.db
@@ -323,6 +324,66 @@ def compute_valor_hora(profile: dict):
 # UI — APP
 # ---------------------------
 st.set_page_config(page_title="Atlas Life (Unificado)", layout="wide")
+
+# ---------------------------
+# TEMA / ESTILO (CSS)
+# ---------------------------
+def inject_global_css():
+    st.markdown(
+        """
+        <style>
+            /* Layout geral */
+            .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
+            [data-testid="stSidebar"] { padding-top: 1rem; }
+
+            /* Cards */
+            .atlas-card {
+                background: rgba(255,255,255,0.04);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 16px;
+                padding: 16px 18px;
+                margin-bottom: 12px;
+            }
+            .atlas-card h3 { margin: 0 0 8px 0; }
+            .atlas-muted { opacity: 0.75; }
+
+            /* Botões mais “fortes” */
+            .stButton>button {
+                border-radius: 12px;
+                padding: 0.6rem 0.9rem;
+                font-weight: 600;
+            }
+
+            /* Inputs arredondados */
+            .stTextInput input, .stNumberInput input, .stTextArea textarea, .stSelectbox div, .stMultiSelect div {
+                border-radius: 12px !important;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def atlas_card(title: str, subtitle: str = "", right=None):
+    """
+    Componente simples para padronizar 'cards'.
+    Uso:
+        atlas_card("Título", "subtitulo...")
+    """
+    st.markdown(
+        f"""
+        <div class="atlas-card">
+            <div style="display:flex; justify-content:space-between; gap: 16px;">
+                <div>
+                    <h3>{title}</h3>
+                    <div class="atlas-muted">{subtitle}</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+inject_global_css()
 
 # Sessão
 if "logged_in" not in st.session_state:
