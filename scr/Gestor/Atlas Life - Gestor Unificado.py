@@ -514,6 +514,38 @@ def compute_valor_hora(profile: dict):
     valor_hora = renda / horas_mensais if horas_mensais > 0 else 0.0
     return renda, horas_semanais, horas_mensais, valor_hora
 
+def fmt_hours_as_dhm(hours: float) -> str:
+    """Converte horas (float) para 'Xd Yh Zmin'."""
+    try:
+        total_minutes = int(round(float(hours) * 60))
+    except Exception:
+        total_minutes = 0
+
+    days = total_minutes // (24 * 60)
+    rem = total_minutes % (24 * 60)
+    h = rem // 60
+    m = rem % 60
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    parts.append(f"{h}h")
+    parts.append(f"{m}min")
+    return " ".join(parts)
+
+def fmt_horas_trabalho(horas: float) -> str:
+    """Exibe horas de forma humana: '189h 24min'"""
+    total_min = int(round(horas * 60))
+    h, m = divmod(total_min, 60)
+    return f"{h}h {m}min"
+
+
+def horas_para_dias_trabalho(horas: float, horas_dia: float = 8.0) -> int:
+    """Converte horas em dias de trabalho (padrão 8h/dia)"""
+    if horas_dia <= 0:
+        return 0
+    return int(round(horas / horas_dia))
+
 # ---------------------------
 # UI — APP
 # ---------------------------
@@ -667,18 +699,52 @@ def do_main_app():
         patrimony = get_user_patrimony(username, protector)
         lvl, l_min, l_needed, l_prog = get_level_info(patrimony)
 
+        def _fmt_horas_mes(horas: float) -> str:
+            # Ex.: 189.4h -> "7d 21h 24min (189.4h)"
+            total_min = int(round(max(0.0, float(horas)) * 60))
+            dias, rem = divmod(total_min, 60 * 24)
+            hh, mm = divmod(rem, 60)
+            return f"{dias}d {hh}h {mm}min ({horas:.1f}h)"
+
+
         st.subheader("🏦 Patrimônio (Metas)")
         st.metric("Total (somatório Patrimônio)", f"R$ {patrimony:,.2f}")
-        st.caption(f"Nível {lvl}")
+
+        # ===== NÍVEL / PROGRESSO =====
+        pct = int(round(l_prog * 100))
+        st.caption(f"🎯 Nível {lvl} • Progresso: {pct}%")
         st.progress(l_prog)
 
+        # Alvo do próximo nível e quanto falta
+        # (lvl 0 -> alvo é LEVEL_BASE_VALUE; lvl >= 1 -> alvo é o próximo patamar)
+        next_target = LEVEL_BASE_VALUE if lvl == 0 else (LEVEL_BASE_VALUE * (LEVEL_GROWTH_FACTOR ** lvl))
+        faltam = max(0.0, float(next_target) - float(patrimony))
+
+        # Mostra "quanto falta" e "meta do próximo nível" de forma limpa (sem ** dentro do caption)
+        st.caption(f"Falta: R$ {faltam:,.2f}")
+        st.caption(f"Próximo nível em: R$ {next_target:,.2f}")
+
         st.divider()
+
+        # ===== VALOR DA HORA =====
         st.subheader("⏱️ Valor da Hora")
         if valor_hora > 0:
-            st.metric("Sua hora vale", f"R$ {valor_hora:.2f}")
-            st.caption(f"Renda: R$ {renda:,.2f} | Horas/mês: {horas_mensais:.1f}")
+            # Formatos humanos (sem aquele 7d 21h 26min)
+            horas_mes_txt = fmt_horas_trabalho(horas_mensais)           # ex: "189h 24min"
+            dias_trabalho = horas_para_dias_trabalho(horas_mensais)     # ex: 24 (dias de 8h)
+
+            # Extra: também é legal mostrar por semana (fica intuitivo)
+            horas_sem_txt = fmt_horas_trabalho(horas_semanais)
+
+            st.metric("Sua hora vale", f"R$ {valor_hora:,.2f}")
+
+            # Linha “bonita” e curta (a que você destacou)
+            st.caption(f"Renda: R$ {renda:,.2f}")
+            st.caption(f"Trabalho/mês: {horas_mes_txt} (≈ {dias_trabalho} dias de 8h)")
+            st.caption(f"Trabalho/semana: {horas_sem_txt}")
+
         else:
-            st.warning("Configure sua renda e rotina em **Meu Perfil**.")
+            st.warning("Configure sua renda e rotina em Meu Perfil.")
 
         st.divider()
         menu = st.radio(
