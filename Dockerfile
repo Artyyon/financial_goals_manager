@@ -1,23 +1,25 @@
 FROM python:3.11-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# Evita bytecode e força stdout imediato
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Dependências de sistema (opcional, mas útil)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Dependências de sistema mínimas (PDF / crypto / plotly)
+RUN apt-get update && apt-get install -y \
     build-essential \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Requisitos
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Instala dependências Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Apps
-COPY apps/ /app/apps/
+# Copia o código
+COPY . .
 
-# Pastas esperadas pelos scripts (db/ e key/ serão montadas via volume)
-RUN mkdir -p /app/db /app/key
-
+# Streamlit
 EXPOSE 8501
+
+CMD ["streamlit", "run", "scr/Gestor/Atlas Life - Gestor Unificado.py", "--server.port=8501", "--server.address=0.0.0.0"]

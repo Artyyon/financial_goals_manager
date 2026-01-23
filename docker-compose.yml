@@ -1,41 +1,14 @@
+version: "3.9"
+
 services:
-  metas:
+  atlas-life:
     build: .
-    container_name: atlas_metas
-    command: >
-      streamlit run /app/apps/GestorMetas.py
-      --server.address=0.0.0.0
-      --server.port=8501
-      --server.baseUrlPath=metas
-      --server.headless=true
-    volumes:
-      - ./db:/app/db
-      - ./key:/app/key
-    restart: unless-stopped
-
-  finance:
-    build: .
-    container_name: atlas_finance
-    command: >
-      streamlit run /app/apps/GestorFinanceiro.py
-      --server.address=0.0.0.0
-      --server.port=8501
-      --server.baseUrlPath=finance
-      --server.headless=true
-    volumes:
-      - ./db:/app/db
-      - ./key:/app/key
-    restart: unless-stopped
-
-  portal:
-    image: nginx:alpine
-    container_name: atlas_portal
-    depends_on:
-      - metas
-      - finance
+    container_name: atlas-life
     ports:
-      - "8080:80"
+      - "8501:8501"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - ./portal:/usr/share/nginx/html
+      - ./db:/app/db
+      - ./key:/app/key
+    env_file:
+      - .env
     restart: unless-stopped
