@@ -22,4 +22,4 @@ COPY . .
 # Streamlit
 EXPOSE 8501
 
-CMD ["streamlit", "run", "scr/Gestor/Atlas Life - Gestor Unificado.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "app/atlas_life_v3.py", "--server.port=8501", "--server.address=0.0.0.0"]
