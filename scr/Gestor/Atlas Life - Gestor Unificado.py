@@ -1,4 +1,4 @@
-# Atlas Life v3 (Unificado) — Gestão Financeira + Gestão de Metas
+# Atlas Life v3 — Gestão Financeira + Gestão de Metas
 # Origem: Gestor Financeiro v1 + Gestor de Metas v4 (unificados em um único app Streamlit)
 #
 # Como rodar:
@@ -451,6 +451,12 @@ def save_goal(username: str, goal_dict: dict, protector: DataProtector):
     sync_global_patrimony(username, protector)
 
 def delete_goal(username: str, goal_id: str, protector: DataProtector):
+    metas = get_goals(username, protector)
+    meta = next((m for m in metas if m["id"] == goal_id), None)
+
+    if meta and meta.get("is_default"):
+        return  # simplesmente ignora
+
     conn = sqlite3.connect(DB_FILE)
     conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
     conn.commit()
@@ -549,7 +555,7 @@ def horas_para_dias_trabalho(horas: float, horas_dia: float = 8.0) -> int:
 # ---------------------------
 # UI — APP
 # ---------------------------
-st.set_page_config(page_title="Atlas Life (Unificado)", layout="wide")
+st.set_page_config(page_title="Atlas Life", layout="wide")
 
 # ---------------------------
 # TEMA / ESTILO (CSS)
@@ -625,7 +631,7 @@ if "active_goal" not in st.session_state:
 def do_login_screen():
     cols = st.columns([1, 2, 1])
     with cols[1]:
-        st.title("🛡️ Atlas Life (Unificado)")
+        st.title("🛡️ Atlas Life")
         t_login, t_reg = st.tabs(["Acessar", "Registrar"])
 
         with t_login:
@@ -681,7 +687,22 @@ def do_login_screen():
                 finally:
                     conn.close()
 
-# ---------------------------
+                # ============================
+                # CRIA META PADRÃO DE PATRIMÔNIO
+                # ============================
+                default_goal = {
+                    "id": f"default-patrimony-{nu}",
+                    "nome": "Patrimônio Total",
+                    "tipo": "Patrimônio",
+                    "objetivo": 10000.0,  # você pode mudar esse valor inicial
+                    "atual": 0.0,
+                    "historico": [],
+                    "is_default": True
+                }
+
+                save_goal(nu, default_goal, tp)
+
+# --------------------------
 # TELA PRINCIPAL
 # ---------------------------
 def do_main_app():
@@ -694,7 +715,7 @@ def do_main_app():
     # sidebar global
     with st.sidebar:
         st.title(f"👤 {username}")
-        st.caption("Atlas Life v3 — Unificado")
+        st.caption("Atlas Life v3")
 
         patrimony = get_user_patrimony(username, protector)
         lvl, l_min, l_needed, l_prog = get_level_info(patrimony)
@@ -1478,7 +1499,7 @@ def do_main_app():
     # GESTÃO DE METAS (GOALS)
     # ---------------------------
     elif menu == "Gestão de Metas":
-        st.title("🚀 Gestão de Metas (Unificado)")
+        st.title("🚀 Gestão de Metas")
 
         with st.expander("+ Nova Meta"):
             c1, c2 = st.columns(2)
@@ -1583,11 +1604,14 @@ def do_main_app():
                     st.toast("Meta atualizada.")
                     st.rerun()
 
-                if st.button("Excluir Meta Permanente", type="primary", key="btn_excluir_meta"):
-                    delete_goal(username, goal["id"], protector)
-                    st.session_state.active_goal = None
-                    st.toast("Meta excluída.")
-                    st.rerun()
+                if goal.get("is_default"):
+                    st.warning("🚫 Esta é a meta padrão do sistema e não pode ser excluída.")
+                else:
+                    if st.button("Excluir Meta", type="primary", key="btn_excluir_meta"):
+                        delete_goal(username, goal["id"], protector)
+                        st.session_state.active_goal = None
+                        st.toast("Meta excluída.")
+                        st.rerun()
 
             with tab_hist:
                 st.subheader("Gerenciar Registros")
