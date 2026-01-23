@@ -189,6 +189,37 @@ def build_transactions_pdf(
     doc.build(story)
     return buf.getvalue()
 
+# ============================
+# GUIA DE CATEGORIAS (MANUAL)
+# ============================
+CATEGORY_GUIDE = {
+    "Salário": "Renda principal do mês (salário, pró-labore fixo). Use quando for o pagamento recorrente do trabalho.",
+    "Extra": "Entradas não recorrentes (freela, bônus, cashback, venda de algo, reembolso).",
+    "Alimentação": "Gastos com comida e bebida (mercado, restaurante, lanche, delivery).",
+    "Lazer": "Gastos de diversão/entretenimento (cinema, jogos, passeios, hobbies, assinaturas de lazer).",
+    "Contas": "Obrigações fixas do mês (aluguel, água, luz, internet, cartão, mensalidades, impostos).",
+    "Transporte": "Deslocamento (combustível, Uber, ônibus, estacionamento, manutenção do veículo).",
+    # "Ajuste": "Use apenas para correções de saldo (quando precisar ajustar o balanço por diferença/erro).",
+    "Outros": "Quando não encaixar bem nas demais. Se estiver usando muito, crie uma categoria nova depois.",
+}
+
+def render_category_manual(selected_cat: str, cat_list: list[str]) -> None:
+    """Mostra um manual rápido para ajudar a escolher a categoria."""
+    with st.expander("📘 Manual de categorias (ajuda para classificar)", expanded=False):
+        st.caption("Dica: escolha a categoria que melhor representa a *natureza* do movimento.")
+        # Mostra a explicação da categoria selecionada
+        if selected_cat in CATEGORY_GUIDE:
+            st.markdown(f"**{selected_cat}** — {CATEGORY_GUIDE[selected_cat]}")
+        else:
+            st.info("Selecione uma categoria para ver a explicação.")
+
+        st.divider()
+
+        # Lista completa (mini-glossário)
+        for c in cat_list:
+            txt = CATEGORY_GUIDE.get(c, "Sem descrição ainda.")
+            st.markdown(f"- **{c}**: {txt}")
+
 # ---------------------------
 # CONFIGURAÇÕES
 # ---------------------------
@@ -921,15 +952,23 @@ def do_main_app():
             c1, c2, c3 = st.columns(3)
             tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=tt_default, key="tx_tipo")
 
+            # categorias disponíveis (as mesmas do sistema)
             cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Outros"]
+
             if edit_mode and current_edit.get("categoria") in cat_list:
                 cat_idx = cat_list.index(current_edit.get("categoria"))
             else:
-                cat_idx = 4
+                cat_idx = 4  # Contas
 
             cat = c2.selectbox("Categoria", cat_list, index=cat_idx, key="tx_cat")
             val = c3.number_input("Valor R$", min_value=0.0, value=val_default, step=10.0, key="tx_val")
             desc = st.text_input("Descrição", value=desc_default, key="tx_desc")
+
+            # 👇 Manual/Guia de categorias (logo abaixo da seleção)
+            render_category_manual(cat, cat_list)
+
+            if cat == "Outros":
+                st.warning("Você escolheu **Outros**. Se começar a usar muito, pode valer criar uma categoria específica 😉")
 
             # ============================
             # PRÉVIA: SALDO ATUAL + IMPACTO + SALDO PROJETADO (SEM HTML)
