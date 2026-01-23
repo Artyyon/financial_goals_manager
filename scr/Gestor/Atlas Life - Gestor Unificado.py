@@ -1255,23 +1255,74 @@ def do_main_app():
     # ---------------------------
     elif menu == "Choque Consciente":
         st.title("🍦 Quanto da sua vida isso custa?")
+
+        st.markdown("""
+        ### 🧠 Pausa consciente
+
+        Antes de gastar, responda mentalmente:
+        - Isso é **necessidade**, **conforto** ou **prazer momentâneo**?
+        - Se eu repetir isso todo mês, estou ok com o impacto?
+        - Isso me aproxima ou me afasta das minhas metas?
+
+        Agora sim, coloque o valor 👇
+        """)
+
         v_compra = st.number_input("Valor do Desejo (R$)", min_value=0.0, step=5.0)
 
         if v_compra > 0:
+            # ============================
+            # Cálculo base
+            # ============================
             total_h = (v_compra / valor_hora) if valor_hora > 0 else 0.0
             h, m = int(total_h), int((total_h - int(total_h)) * 60)
 
-            pct = (v_compra / renda * 100) if renda > 0 else 0.0
+            dias_trabalho = total_h / 8
+            pct_mes = (v_compra / renda * 100) if renda > 0 else 0.0
+
+            # ============================
+            # Card principal — impacto emocional
+            # ============================
             st.markdown(
                 f"""
-                <div style="background-color: #1f2937; padding: 30px; border-radius: 15px; border-left: 8px solid #ef4444;">
-                    <h1 style="color: white; margin:0;">⏱️ {h}h {m}min da sua vida</h1>
-                    <p style="font-size: 1.2rem; color: #d1d5db;">Isso representa <b>{pct:.1f}%</b> do seu esforço este mês.</p>
+                <div style="background-color:#020617; padding:28px; border-radius:18px; border-left:8px solid #ef4444;">
+                    <h1 style="margin:0; color:white;">⏳ {h}h {m}min da sua vida</h1>
+                    <p style="margin-top:10px; font-size:1.1rem; color:#cbd5f5;">
+                        • Equivale a <b>{dias_trabalho:.1f} dia(s) de trabalho</b><br>
+                        • Consome <b>{pct_mes:.1f}% da sua renda mensal</b>
+                    </p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
+            st.divider()
+
+            # ============================
+            # Reflexão guiada (antigasto idiota)
+            # ============================
+            st.markdown("### 🧠 Antes de decidir, responda com sinceridade:")
+
+            c1, c2 = st.columns(2)
+
+            with c1:
+                st.markdown("""
+                - Eu **compraria isso novamente** no próximo mês?
+                - Isso resolve um problema real ou é só impulso?
+                - Se eu repetir esse gasto, estou confortável?
+                """)
+
+            with c2:
+                st.markdown("""
+                - Isso me aproxima ou afasta das minhas metas?
+                - Isso troca tempo de vida por algo duradouro?
+                - Daqui 30 dias, ainda vai ter valor?
+                """)
+
+            st.divider()
+
+            # ============================
+            # Ação consciente
+            # ============================
             if st.button("Registrar como Gasto Consciente"):
                 tid = str(datetime.now().timestamp())
                 item = {
@@ -1284,7 +1335,7 @@ def do_main_app():
                     "tempo": f"{h}h {m}m",
                 }
                 save_financial_item(username, item, protector)
-                st.toast("Transação registrada com sucesso! ✅")
+                st.toast("Gasto registrado com consciência 🧠")
                 st.rerun()
 
     # ---------------------------
