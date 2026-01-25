@@ -39,6 +39,45 @@ from reportlab.lib.units import cm
 # EXPORTAÇÕES
 # ---------------------------
 
+def parse_tx_datetime(series_or_value):
+    """
+    Converte datas de transações para datetime de forma robusta.
+    - Prioriza ISO (2026-01-25T09:15:00)
+    - Tenta dayfirst para casos antigos (25/01/2026 09:15)
+    """
+    try:
+        dt = pd.to_datetime(series_or_value, errors="coerce")
+        if isinstance(dt, pd.Series):
+            mask = dt.isna()
+            if mask.any():
+                dt.loc[mask] = pd.to_datetime(series_or_value.loc[mask], errors="coerce", dayfirst=True)
+            return dt
+        else:
+            if pd.isna(dt):
+                dt = pd.to_datetime(series_or_value, errors="coerce", dayfirst=True)
+            return dt
+    except Exception:
+        return pd.to_datetime(series_or_value, errors="coerce")
+
+
+def clamp_date(d, min_d, max_d):
+    """Garante que a data fique dentro do range permitido pelo date_input."""
+    if d is None:
+        return min_d
+    if d < min_d:
+        return min_d
+    if d > max_d:
+        return max_d
+    return d
+
+
+def normalize_start_end(start_d, end_d):
+    """Se usuário inverter (start > end), corrige automaticamente."""
+    if start_d and end_d and start_d > end_d:
+        return end_d, start_d
+    return start_d, end_d
+
+
 def _brl(v: float) -> str:
     try:
         s = f"{float(v):,.2f}"
@@ -128,7 +167,8 @@ def build_transactions_pdf(
 
     table_data = [["Data", "Tipo", "Categoria", "Descrição", "Valor", "Tempo"]]
     for _, r in dfp.iterrows():
-        data_txt = str(r.get("data", ""))[:10]
+        dtp = parse_tx_datetime(r.get("data", ""))
+        data_txt = dtp.strftime("%d/%m/%Y %H:%M") if not pd.isna(dtp) else str(r.get("data", ""))[:16]
         tipo = str(r.get("tipo", ""))
         cat = str(r.get("categoria", ""))
         desc = str(r.get("descricao", ""))
@@ -272,6 +312,40 @@ class DataProtector:
             return self.fernet.decrypt(encrypted_str.encode("utf-8")).decode("utf-8")
         except Exception:
             return None
+        
+def compute_current_balance(username, protector) -> float:
+    """Saldo atual = entradas - saídas (inclui ajustes e qualquer transação salva)."""
+    all_items = get_financial_items(username, protector)
+    if not all_items:
+        return 0.0
+
+    df = pd.DataFrame(all_items)
+    if df.empty:
+        return 0.0
+
+    df["valor"] = pd.to_numeric(df.get("valor", 0), errors="coerce").fillna(0.0)
+
+    entradas = df[df.get("tipo") == "Entrada"]["valor"].sum()
+    saidas = df[df.get("tipo") == "Saída"]["valor"].sum()
+    return float(entradas - saidas)
+
+
+def help_toggle_button(key: str, title: str, content_md: str):
+    """
+    Botão pequeno '❓' que abre/fecha um bloco de explicação sem poluir a tela.
+    """
+    state_key = f"_help_{key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = False
+
+    cols = st.columns([0.08, 0.92])
+    with cols[0]:
+        if st.button("❓", key=f"btn_{key}", help=title):
+            st.session_state[state_key] = not st.session_state[state_key]
+
+    if st.session_state[state_key]:
+        st.info(content_md)
+
 
 # ---------------------------
 # BANCO DE DADOS
@@ -410,7 +484,20 @@ def get_level_info(total_patrimony: float):
 def rebuild_goal_state(goal: dict):
     """Recalcula o campo 'atual' e o acumulado do histórico para garantir consistência."""
     current = 0.0
-    goal["historico"].sort(key=lambda x: x["data"])
+
+    # ✅ ordena por datetime real (robusto)
+    def _dt_of(x):
+        try:
+            dt = parse_tx_datetime(x.get("data", ""))
+            if pd.isna(dt):
+                return datetime.min
+            # parse_tx_datetime pode devolver Timestamp
+            return dt.to_pydatetime() if hasattr(dt, "to_pydatetime") else dt
+        except Exception:
+            return datetime.min
+
+    goal["historico"].sort(key=_dt_of)
+
     for entry in goal["historico"]:
         if entry["tipo"] == "Aporte":
             current += entry["valor"]
@@ -418,9 +505,12 @@ def rebuild_goal_state(goal: dict):
             current -= entry["valor"]
         elif entry["tipo"] == "Ajuste":
             current = entry["valor"]
+
         entry["valor_acumulado"] = current
+
     goal["atual"] = current
     return goal
+
 
 def get_goals(username: str, protector: DataProtector):
     conn = sqlite3.connect(DB_FILE)
@@ -825,21 +915,51 @@ def do_main_app():
                     )
 
                 # Intervalo (range) usado para filtrar tudo na página
+                df["data_fmt"] = parse_tx_datetime(df["data"])
+                df = df.dropna(subset=["data_fmt"]).copy()
+
                 min_d = df["data_fmt"].min().date()
-                max_d = df["data_fmt"].max().date()
+                max_d_data = df["data_fmt"].max().date()
+
+                today = datetime.now().date()
+                max_d_ui = max(max_d_data, today)
 
                 if time_mode == "Personalizado":
-                    with ctm2:
-                        start_d = st.date_input("Início", value=st.session_state.vg_custom_start, min_value=min_d, max_value=max_d)
-                    with ctm3:
-                        end_d = st.date_input("Fim", value=st.session_state.vg_custom_end, min_value=min_d, max_value=max_d)
+                    # clamp de session_state
+                    if "vg_custom_start" not in st.session_state:
+                        st.session_state.vg_custom_start = min_d
+                    if "vg_custom_end" not in st.session_state:
+                        st.session_state.vg_custom_end = max_d_ui
 
-                    # guarda
+                    st.session_state.vg_custom_start = clamp_date(st.session_state.vg_custom_start, min_d, max_d_ui)
+                    st.session_state.vg_custom_end = clamp_date(st.session_state.vg_custom_end, min_d, max_d_ui)
+                    st.session_state.vg_custom_start, st.session_state.vg_custom_end = normalize_start_end(
+                        st.session_state.vg_custom_start, st.session_state.vg_custom_end
+                    )
+
+                    with ctm2:
+                        start_d = st.date_input(
+                            "Início",
+                            value=st.session_state.vg_custom_start,
+                            min_value=min_d,
+                            max_value=max_d_ui,
+                        )
+                    with ctm3:
+                        end_d = st.date_input(
+                            "Fim",
+                            value=st.session_state.vg_custom_end,
+                            min_value=min_d,
+                            max_value=max_d_ui,
+                        )
+
+                    start_d, end_d = normalize_start_end(start_d, end_d)
+
                     st.session_state.vg_custom_start = start_d
                     st.session_state.vg_custom_end = end_d
 
                     start_ts = pd.to_datetime(start_d)
                     end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
                 else:
                     # “Janelas prontas” (você pode ajustar depois)
                     now = df["data_fmt"].max()
@@ -995,27 +1115,75 @@ def do_main_app():
         )
 
         if st.session_state.tx_tab == "Ajuste de Balanço":
-            st.subheader("Correção de Saldo")
+            st.subheader("Balanço (Correção do saldo atual)")
+
+            help_toggle_button(
+                key="balanco",
+                title="Como funciona o Balanço?",
+                content_md=(
+                    "**O que é isso?**\n\n"
+                    "- Você informa **quanto dinheiro você tem agora** (saldo real).\n"
+                    "- O sistema calcula o **saldo estimado** somando entradas e subtraindo saídas.\n"
+                    "- Se houver diferença, ele registra automaticamente um **Ajuste**:\n"
+                    "  - Diferença positiva → **Entrada (Ajuste)**\n"
+                    "  - Diferença negativa → **Saída (Ajuste)**\n\n"
+                    "**Por que existe?**\n\n"
+                    "- Para corrigir o saldo sem você precisar ficar calculando 'se foi para mais ou para menos'.\n"
+                    "- Ajuda quando você esqueceu de registrar algo, registrou errado, ou quer “sincronizar” com a realidade.\n"
+                ),
+            )
+
+            # saldo calculado (antes do ajuste)
+            saldo_calculado = compute_current_balance(username, protector)
+
+            st.caption(f"Saldo calculado pelo sistema agora: **R$ {saldo_calculado:,.2f}**".replace(",", "X").replace(".", ",").replace("X", "."))
+
             with st.form("balanco_form"):
-                valor_ajuste = st.number_input("Valor da Diferença (R$)", min_value=0.0, step=10.0)
-                tipo_ajuste = st.selectbox("Ação", ["Ajuste Positivo (Entrada)", "Ajuste Negativo (Saída)"])
-                if st.form_submit_button("Aplicar Correção"):
-                    tid = str(datetime.now().timestamp())
-                    t_aj = "Entrada" if "Positivo" in tipo_ajuste else "Saída"
-                    total_h = (valor_ajuste / valor_hora) if (valor_hora > 0 and t_aj == "Saída") else 0
-                    tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if t_aj == "Saída" else "-"
-                    item = {
-                        "id": tid,
-                        "data": datetime.now().isoformat(),
-                        "tipo": t_aj,
-                        "categoria": "Ajuste",
-                        "valor": float(valor_ajuste),
-                        "descricao": "Correção de Balanço",
-                        "tempo": tempo,
-                    }
-                    save_financial_item(username, item, protector)
-                    st.toast("Balanço atualizado com sucesso! ⚖️")
-                    st.rerun()
+                saldo_informado = st.number_input(
+                    "Qual é o seu saldo atual real (R$)?",
+                    min_value=0.0,
+                    step=10.0,
+                    format="%.2f",
+                )
+
+                # (Opcional) permitir escolher data/hora do ajuste
+                cdt1, cdt2 = st.columns([2, 1])
+                bal_date = cdt1.date_input("Data do balanço", value=datetime.now().date(), key="bal_date")
+                bal_time = cdt2.time_input("Hora", value=datetime.now().time().replace(second=0, microsecond=0), key="bal_time")
+                bal_dt = datetime.combine(bal_date, bal_time)
+
+                if st.form_submit_button("Aplicar Balanço"):
+                    delta = float(saldo_informado) - float(saldo_calculado)
+
+                    # evita lançar ajuste inútil
+                    if abs(delta) < 0.005:
+                        st.info("✅ Seu saldo informado já bate com o saldo calculado. Nenhum ajuste foi necessário.")
+                    else:
+                        tid = str(datetime.now().timestamp())
+                        t_aj = "Entrada" if delta > 0 else "Saída"
+                        valor_ajuste = abs(delta)
+
+                        # tempo só faz sentido para Saída
+                        total_h = (valor_ajuste / valor_hora) if (valor_hora > 0 and t_aj == "Saída") else 0
+                        tempo = f"{int(total_h)}h {int((total_h-int(total_h))*60)}m" if t_aj == "Saída" else "-"
+
+                        item = {
+                            "id": tid,
+                            "data": bal_dt.isoformat(),
+                            "tipo": t_aj,
+                            "categoria": "Ajuste",
+                            "valor": float(valor_ajuste),
+                            "descricao": f"Balanço: correção do saldo para R$ {float(saldo_informado):.2f}",
+                            "tempo": tempo,
+                        }
+                        save_financial_item(username, item, protector)
+
+                        st.toast("Balanço aplicado! ⚖️", icon="⚖️")
+                        st.success(
+                            f"Ajuste registrado como **{t_aj}** de **R$ {valor_ajuste:,.2f}** para igualar ao saldo informado."
+                            .replace(",", "X").replace(".", ",").replace("X", ".")
+                        )
+                        st.rerun()
 
         elif st.session_state.tx_tab == "Novo Lançamento":
             edit_mode = st.session_state.editing_item is not None
@@ -1189,135 +1357,145 @@ def do_main_app():
             df_all = pd.DataFrame(items) if items else pd.DataFrame()
 
             if not df_all.empty:
-                df_all["data_fmt"] = pd.to_datetime(df_all["data"], errors="coerce")
+                # ✅ parse robusto
+                df_all["data_fmt"] = parse_tx_datetime(df_all["data"])
                 df_all = df_all.dropna(subset=["data_fmt"]).copy()
 
-                min_d = df_all["data_fmt"].min().date()
-                max_d = df_all["data_fmt"].max().date()
-
-                with f1:
-                    start_d = st.date_input(
-                        "Início",
-                        value=min_d,
-                        min_value=min_d,
-                        max_value=max_d,
-                        key="tx_filter_start",
-                    )
-                with f2:
-                    end_d = st.date_input(
-                        "Fim",
-                        value=max_d,
-                        min_value=min_d,
-                        max_value=max_d,
-                        key="tx_filter_end",
-                    )
-                with f3:
-                    q = st.text_input(
-                        "Palavra-chave (descrição/categoria/tipo)",
-                        key="tx_filter_q",
-                    ).strip().lower()
-
-                start_ts = pd.to_datetime(start_d)
-                end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-
-                df = df_all[(df_all["data_fmt"] >= start_ts) & (df_all["data_fmt"] <= end_ts)].copy()
-
-                if q:
-                    def _match(row):
-                        fields = [
-                            str(row.get("descricao", "")),
-                            str(row.get("categoria", "")),
-                            str(row.get("tipo", "")),
-                        ]
-                        return any(q in f.lower() for f in fields)
-
-                    df = df[df.apply(_match, axis=1)]
-
-                # ordena mais recente primeiro (por data)
-                df = df.sort_values(by="data_fmt", ascending=False).reset_index(drop=True)
-
-                # ----------------------------
-                # EXPORTAÇÃO (CSV / Excel / PDF)
-                # ----------------------------
-                with st.expander("⬇️ Exportar resultados", expanded=False):
-
-                    # monta labels de filtro (mesmo se não tiver itens)
+                if df_all.empty:
+                    df = pd.DataFrame()
+                    # defaults para label/export
+                    start_d = end_d = datetime.now().date()
+                    q = ""
                     period_label = "-"
                     keyword_label = "-"
-                    try:
-                        if not df_all.empty:
-                            period_label = f"{start_d.strftime('%d/%m/%Y')} → {end_d.strftime('%d/%m/%Y')}"
-                            keyword_label = (q if q else "(vazio)")
-                    except Exception:
-                        pass
+                    max_d_ui = datetime.now().date()
+                    min_d = datetime.now().date()
+                else:
+                    min_d = df_all["data_fmt"].min().date()
+                    max_d_data = df_all["data_fmt"].max().date()
 
-                    if df is None or df.empty:
-                        st.info("Aplique filtros e/ou adicione transações para habilitar exportação.")
-                    else:
-                        # DataFrame para exportar (remove colunas internas)
-                        df_export = df.copy()
-                        if "data_fmt" in df_export.columns:
-                            df_export = df_export.drop(columns=["data_fmt"], errors="ignore")
+                    today = datetime.now().date()
+                    max_d_ui = max(max_d_data, today)
 
-                        # ordena e seleciona colunas mais úteis
-                        cols_pref = ["data", "tipo", "categoria", "descricao", "valor", "tempo", "id"]
-                        cols_final = [c for c in cols_pref if c in df_export.columns] + [c for c in df_export.columns if c not in cols_pref]
-                        df_export = df_export[cols_final]
+                    cur_start = st.session_state.get("tx_filter_start", min_d)
+                    cur_end = st.session_state.get("tx_filter_end", max_d_ui)
 
-                        c1, c2, c3 = st.columns(3)
+                    cur_start = clamp_date(cur_start, min_d, max_d_ui)
+                    cur_end = clamp_date(cur_end, min_d, max_d_ui)
+                    cur_start, cur_end = normalize_start_end(cur_start, cur_end)
 
-                        # CSV
-                        csv_bytes = df_export.to_csv(index=False).encode("utf-8")
-                        with c1:
-                            st.download_button(
-                                "📄 Baixar CSV",
-                                data=csv_bytes,
-                                file_name=f"transacoes_{username}.csv",
-                                mime="text/csv",
-                                use_container_width=True,
-                            )
+                    with f1:
+                        start_d = st.date_input("Início", value=cur_start, min_value=min_d, max_value=max_d_ui, key="tx_filter_start")
+                    with f2:
+                        end_d = st.date_input("Fim", value=cur_end, min_value=min_d, max_value=max_d_ui, key="tx_filter_end")
+                    with f3:
+                        q = st.text_input("Palavra-chave (descrição/categoria/tipo)", key="tx_filter_q").strip().lower()
 
-                        # Excel
-                        xlsx_buf = BytesIO()
-                        with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
-                            df_export.to_excel(writer, index=False, sheet_name="Transacoes")
-                            # uma aba extra com filtros
-                            pd.DataFrame(
-                                {
-                                    "Filtro": ["Período", "Palavra-chave"],
-                                    "Valor": [period_label, keyword_label],
-                                }
-                            ).to_excel(writer, index=False, sheet_name="Filtros")
-                        with c2:
-                            st.download_button(
-                                "📊 Baixar Excel",
-                                data=xlsx_buf.getvalue(),
-                                file_name=f"transacoes_{username}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True,
-                            )
+                    start_d, end_d = normalize_start_end(start_d, end_d)
 
-                        # PDF (estilizado)
-                        pdf_bytes = build_transactions_pdf(
-                            df=df_export,
-                            username=username,
-                            period_label=period_label,
-                            keyword_label=keyword_label,
-                        )
-                        with c3:
-                            st.download_button(
-                                "🧾 Baixar PDF",
-                                data=pdf_bytes,
-                                file_name=f"transacoes_{username}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                            )
+                    start_ts = pd.to_datetime(start_d)
+                    end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
-                        st.caption(f"Exportando {len(df_export)} linha(s) | Período: {period_label} | Palavra-chave: {keyword_label}")
+                    df = df_all[(df_all["data_fmt"] >= start_ts) & (df_all["data_fmt"] <= end_ts)].copy()
 
+                    if q:
+                        def _match(row):
+                            fields = [str(row.get("descricao", "")), str(row.get("categoria", "")), str(row.get("tipo", ""))]
+                            return any(q in f.lower() for f in fields)
+
+                        df = df[df.apply(_match, axis=1)]
+
+                    df = df.sort_values(by="data_fmt", ascending=False).reset_index(drop=True)
+
+                    period_label = f"{start_d.strftime('%d/%m/%Y')} → {end_d.strftime('%d/%m/%Y')}"
+                    keyword_label = (q if q else "(vazio)")
             else:
-                # ✅ Sem itens: DataFrame vazio (evita UnboundLocalError)
+                # ✅ sem itens
                 df = pd.DataFrame()
+                start_d = end_d = datetime.now().date()
+                q = ""
+                period_label = "-"
+                keyword_label = "-"
+
+
+            # ----------------------------
+            # EXPORTAÇÃO (CSV / Excel / PDF)
+            # ----------------------------
+            with st.expander("⬇️ Exportar resultados", expanded=False):
+
+                # monta labels de filtro (mesmo se não tiver itens)
+                period_label = "-"
+                keyword_label = "-"
+                try:
+                    if not df_all.empty:
+                        period_label = f"{start_d.strftime('%d/%m/%Y')} → {end_d.strftime('%d/%m/%Y')}"
+                        keyword_label = (q if q else "(vazio)")
+                except Exception:
+                    pass
+
+                if df is None or df.empty:
+                    st.info("Aplique filtros e/ou adicione transações para habilitar exportação.")
+                else:
+                    # DataFrame para exportar (remove colunas internas)
+                    df_export = df.copy()
+                    if "data_fmt" in df_export.columns:
+                        df_export = df_export.drop(columns=["data_fmt"], errors="ignore")
+
+                    # ordena e seleciona colunas mais úteis
+                    cols_pref = ["data", "tipo", "categoria", "descricao", "valor", "tempo", "id"]
+                    cols_final = [c for c in cols_pref if c in df_export.columns] + [c for c in df_export.columns if c not in cols_pref]
+                    df_export = df_export[cols_final]
+
+                    c1, c2, c3 = st.columns(3)
+
+                    # CSV
+                    csv_bytes = df_export.to_csv(index=False).encode("utf-8")
+                    with c1:
+                        st.download_button(
+                            "📄 Baixar CSV",
+                            data=csv_bytes,
+                            file_name=f"transacoes_{username}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+
+                    # Excel
+                    xlsx_buf = BytesIO()
+                    with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
+                        df_export.to_excel(writer, index=False, sheet_name="Transacoes")
+                        # uma aba extra com filtros
+                        pd.DataFrame(
+                            {
+                                "Filtro": ["Período", "Palavra-chave"],
+                                "Valor": [period_label, keyword_label],
+                            }
+                        ).to_excel(writer, index=False, sheet_name="Filtros")
+                    with c2:
+                        st.download_button(
+                            "📊 Baixar Excel",
+                            data=xlsx_buf.getvalue(),
+                            file_name=f"transacoes_{username}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+
+                    # PDF (estilizado)
+                    pdf_bytes = build_transactions_pdf(
+                        df=df_export,
+                        username=username,
+                        period_label=period_label,
+                        keyword_label=keyword_label,
+                    )
+                    with c3:
+                        st.download_button(
+                            "🧾 Baixar PDF",
+                            data=pdf_bytes,
+                            file_name=f"transacoes_{username}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+
+                    st.caption(f"Exportando {len(df_export)} linha(s) | Período: {period_label} | Palavra-chave: {keyword_label}")
 
             # ----------------------------
             # LISTAGEM
@@ -1334,7 +1512,7 @@ def do_main_app():
 
                         titulo = row.get("descricao") or row.get("categoria") or "(sem descrição)"
                         try:
-                            dt_show = pd.to_datetime(row.get("data", ""), errors="coerce")
+                            dt_show = parse_tx_datetime(row.get("data", ""))
                             data_txt = dt_show.strftime("%d/%m/%Y %H:%M") if not pd.isna(dt_show) else str(row.get("data", ""))[:16]
                         except Exception:
                             data_txt = str(row.get("data", ""))[:16]
@@ -1581,19 +1759,100 @@ def do_main_app():
                 c_in, c_viz = st.columns([1, 2])
 
                 with c_in:
-                    tipo = st.selectbox("Tipo", ["Aporte", "Retirada", "Ajuste"], key="t_mov")
-                    valor = st.number_input("Valor R$", min_value=0.0, step=10.0, key="v_mov")
-                    desc = st.text_area("Descrição/Origem", key="d_mov")
+                    st.subheader("Movimentação")
 
-                    if st.button("Registrar", key="btn_reg_mov"):
-                        if tipo == "Retirada" and valor > float(goal.get("atual", 0.0)):
-                            st.error(f"Operação negada! Saldo insuficiente (Atual: R$ {float(goal.get('atual',0.0)):,.2f})")
-                        else:
+                    help_toggle_button(
+                        key=f"meta_mov_{goal['id']}",
+                        title="Como funcionam Aporte, Retirada e Balanço?",
+                        content_md=(
+                            "**Aporte**: adiciona dinheiro na meta.\n\n"
+                            "**Retirada**: remove dinheiro da meta (não deixa ficar negativo).\n\n"
+                            "**Balanço (correção)**: você informa o **saldo real atual** da meta.\n"
+                            "O sistema calcula a diferença:\n"
+                            "- Se o saldo real for maior → registra **Aporte** da diferença.\n"
+                            "- Se o saldo real for menor → registra **Retirada** da diferença.\n"
+                            "Assim você corrige sem fazer contas."
+                        ),
+                    )
+
+                    # ✅ Tipo agora tem Balanço inteligente
+                    tipo = st.selectbox("Operação", ["Aporte", "Retirada", "Balanço (correção)"], key=f"t_mov_{goal['id']}")
+
+                    # ✅ Data/Hora (para TODOS: aporte/retirada/balanço)
+                    now = datetime.now()
+                    cdt1, cdt2 = st.columns([2, 1])
+                    g_date = cdt1.date_input("Data da operação", value=now.date(), key=f"g_date_{goal['id']}")
+                    g_time = cdt2.time_input("Hora", value=now.time().replace(second=0, microsecond=0), key=f"g_time_{goal['id']}")
+                    g_dt = datetime.combine(g_date, g_time)
+
+                    desc = st.text_area("Descrição/Origem", key=f"d_mov_{goal['id']}")
+
+                    # Campos variam conforme tipo
+                    if tipo == "Balanço (correção)":
+                        saldo_atual_sistema = float(goal.get("atual", 0.0))
+                        st.caption(f"Saldo calculado da meta agora: **{_brl(saldo_atual_sistema)}**")
+
+                        saldo_informado = st.number_input(
+                            "Qual é o saldo real atual dessa meta (R$)?",
+                            min_value=0.0,
+                            step=10.0,
+                            key=f"saldo_real_{goal['id']}",
+                        )
+
+                        if st.button("Aplicar Balanço", key=f"btn_bal_{goal['id']}"):
+                            delta = float(saldo_informado) - float(saldo_atual_sistema)
+
+                            if abs(delta) < 0.005:
+                                st.info("✅ O saldo informado já bate com o saldo atual da meta. Nenhuma correção necessária.")
+                                st.stop()
+
+                            # delta > 0 => aporte; delta < 0 => retirada
+                            op = "Aporte" if delta > 0 else "Retirada"
+                            v = abs(delta)
+
+                            # retirada não pode deixar negativo
+                            if op == "Retirada" and v > float(goal.get("atual", 0.0)):
+                                st.error(
+                                    f"Operação negada! A correção deixaria saldo negativo. "
+                                    f"(Atual: {_brl(float(goal.get('atual',0.0)))})"
+                                )
+                                st.stop()
+
                             goal["historico"].append(
                                 {
                                     "uid": str(datetime.now().timestamp()),
-                                    "data": datetime.now().isoformat(),
-                                    "tipo": tipo,
+                                    "data": g_dt.isoformat(),          # ✅ data/hora escolhida
+                                    "tipo": op,                         # ✅ registra como Aporte/Retirada
+                                    "valor": float(v),
+                                    "descricao": (desc or "Balanço (correção)"),
+                                }
+                            )
+                            goal = rebuild_goal_state(goal)
+                            save_goal(username, goal, protector)
+                            st.success(f"Balanço aplicado! Registrado como **{op}** de **{_brl(v)}**.")
+                            st.rerun()
+
+                    else:
+                        # Aporte / Retirada (normal)
+                        valor = st.number_input("Valor R$", min_value=0.0, step=10.0, key=f"v_mov_{goal['id']}")
+
+                        if st.button("Registrar", key=f"btn_reg_mov_{goal['id']}"):
+                            if float(valor) <= 0:
+                                st.error("O valor precisa ser maior que zero.")
+                                st.stop()
+
+                            if tipo == "Retirada" and float(valor) > float(goal.get("atual", 0.0)):
+                                st.error(
+                                    f"Operação negada! Saldo insuficiente "
+                                    f"(Atual: {_brl(float(goal.get('atual',0.0)))})"
+                                )
+                                st.stop()
+
+                            goal["historico"].append(
+                                {
+                                    "uid": str(datetime.now().timestamp()),
+                                    "data": g_dt.isoformat(),          # ✅ data/hora escolhida
+                                    "tipo": tipo,                       # "Aporte" ou "Retirada"
                                     "valor": float(valor),
                                     "descricao": desc,
                                 }
@@ -1606,7 +1865,7 @@ def do_main_app():
                 with c_viz:
                     if goal.get("historico"):
                         df = pd.DataFrame(goal["historico"])
-                        df["data_dt"] = pd.to_datetime(df["data"]).dt.date
+                        df["data_dt"] = parse_tx_datetime(df["data"]).dt.date
                         df_daily = df.groupby("data_dt").last().reset_index()
                         fig = px.line(df_daily, x="data_dt", y="valor_acumulado", markers=True)
                         st.plotly_chart(fig, use_container_width=True)
@@ -1655,10 +1914,24 @@ def do_main_app():
                             new_v = st.number_input("Valor", value=float(entry["valor"]), step=10.0, key=f"v_{entry['uid']}")
                             new_d = st.text_area("Descrição", value=entry.get("descricao", ""), key=f"d_{entry['uid']}")
 
+                            # ✅ editar data/hora do registro
+                            try:
+                                dt_old = parse_tx_datetime(entry.get("data", ""))
+                                if pd.isna(dt_old):
+                                    dt_old = datetime.now()
+                            except Exception:
+                                dt_old = datetime.now()
+
+                            ccdt1, ccdt2 = st.columns([2, 1])
+                            new_date = ccdt1.date_input("Data", value=dt_old.date(), key=f"dt_{entry['uid']}")
+                            new_time = ccdt2.time_input("Hora", value=dt_old.time().replace(second=0, microsecond=0), key=f"tm_{entry['uid']}")
+                            new_dt = datetime.combine(new_date, new_time)
+
                             cc1, cc2 = st.columns(2)
                             if cc1.button("Salvar Edição", key=f"s_{entry['uid']}"):
                                 goal["historico"][idx]["valor"] = float(new_v)
                                 goal["historico"][idx]["descricao"] = new_d
+                                goal["historico"][idx]["data"] = new_dt.isoformat()
                                 goal = rebuild_goal_state(goal)
 
                                 # Checa saldo negativo em algum ponto
