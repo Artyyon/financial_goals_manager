@@ -4,7 +4,7 @@
 # Como rodar:
 #   pip install streamlit pandas bcrypt cryptography plotly
 #   streamlit run Atlas_Life_v3_unificado.py
-#   streamlit run "scr\Gestor\Atlas Life - Gestor Unificado.py"
+#   streamlit run "scr\Gestor Unificado\Atlas Life - Gestor Unificado.py"
 #
 # Observação importante sobre dados antigos:
 # - Este app usa um NOVO banco SQLite por padrão: db/atlas_life_unified_v3.db
@@ -1033,6 +1033,35 @@ def do_main_app():
                 val_default = 0.0
                 desc_default = ""
 
+            # ============================
+            # DATA/HORA da transação
+            # ============================
+            # defaults
+            if edit_mode and current_edit and current_edit.get("data"):
+                try:
+                    dt_edit = pd.to_datetime(current_edit["data"], errors="coerce")
+                    if pd.isna(dt_edit):
+                        dt_edit = datetime.now()
+                except Exception:
+                    dt_edit = datetime.now()
+            else:
+                dt_edit = datetime.now()
+
+            cdt1, cdt2 = st.columns([2, 1])
+            tx_date = cdt1.date_input(
+                "Data da transação",
+                value=dt_edit.date(),
+                key="tx_date",
+            )
+            tx_time = cdt2.time_input(
+                "Hora",
+                value=dt_edit.time().replace(second=0, microsecond=0),
+                key="tx_time",
+            )
+
+            # datetime final que será salvo
+            tx_dt = datetime.combine(tx_date, tx_time)
+
             # ----------------------------
             # Campos (SEM FORM)
             # ----------------------------
@@ -1120,7 +1149,7 @@ def do_main_app():
 
                     item = {
                         "id": tid,
-                        "data": current_edit["data"] if edit_mode else datetime.now().isoformat(),
+                        "data": tx_dt.isoformat(),  # ✅ salva a data/hora escolhida
                         "tipo": tt,
                         "categoria": cat,
                         "valor": float(val),
@@ -1304,7 +1333,11 @@ def do_main_app():
                         color = "green" if tipo == "Entrada" else "red"
 
                         titulo = row.get("descricao") or row.get("categoria") or "(sem descrição)"
-                        data_txt = str(row.get("data", ""))[:10]
+                        try:
+                            dt_show = pd.to_datetime(row.get("data", ""), errors="coerce")
+                            data_txt = dt_show.strftime("%d/%m/%Y %H:%M") if not pd.isna(dt_show) else str(row.get("data", ""))[:16]
+                        except Exception:
+                            data_txt = str(row.get("data", ""))[:16]
                         categoria = row.get("categoria", "-")
 
                         col1.markdown(f"**{titulo}**")
