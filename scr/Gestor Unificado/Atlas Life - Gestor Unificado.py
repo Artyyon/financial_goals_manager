@@ -71,6 +71,25 @@ def clamp_date(d, min_d, max_d):
     return d
 
 
+def choose_line_freq(start_ts, end_ts) -> str:
+    """
+    Frequência para gráficos de linha (evolução):
+    - até 60 dias: diário
+    - até 2 anos: semanal
+    - acima: mensal
+    """
+    try:
+        span_days = (pd.to_datetime(end_ts) - pd.to_datetime(start_ts)).days
+    except Exception:
+        span_days = 30
+
+    if span_days <= 60:
+        return "D"
+    if span_days <= 730:
+        return "W"
+    return "M"
+
+
 def normalize_start_end(start_d, end_d):
     """Se usuário inverter (start > end), corrige automaticamente."""
     if start_d and end_d and start_d > end_d:
@@ -805,7 +824,7 @@ def do_main_app():
     # sidebar global
     with st.sidebar:
         st.title(f"👤 {username}")
-        st.caption("Atlas Life v3")
+        st.caption("Atlas Life v3.1")
 
         patrimony = get_user_patrimony(username, protector)
         lvl, l_min, l_needed, l_prog = get_level_info(patrimony)
@@ -1002,15 +1021,15 @@ def do_main_app():
             # ✅ saldo no fim do período (o “saldo atualizado”)
             saldo_no_fim = saldo_base + float(df_vg["delta"].sum())
 
-            # Mapeia granularidade -> frequência pandas
-            freq_map = {
-                "Diário": "D",
-                "Semanal": "W",
-                "Mensal": "M",
-                "Anual": "Y",
-                "Personalizado": "M",  # no personalizado, vamos usar mensal como padrão (ajustável depois)
-            }
-            freq = freq_map.get(time_mode, "M")
+            # # Mapeia granularidade -> frequência pandas
+            # freq_map = {
+            #     "Diário": "D",
+            #     "Semanal": "W",
+            #     "Mensal": "M",
+            #     "Anual": "Y",
+            #     "Personalizado": "M",  # no personalizado, vamos usar mensal como padrão (ajustável depois)
+            # }
+            # freq = freq_map.get(time_mode, "M")
 
             ent_total = float(df_vg[df_vg["tipo"] == "Entrada"]["valor"].sum())
             sai_total = float(df_vg[df_vg["tipo"] == "Saída"]["valor"].sum())
@@ -1050,16 +1069,34 @@ def do_main_app():
             else:
                 g1.info("Sem dados de saída para exibir gráfico.")
 
-            # --- GRÁFICO: PATRIMÔNIO POR PERÍODO (suaviza oscilações) ---
-            # Agrega delta por período e cria patrimônio acumulado por período
+            # ==========================================
+            # GRÁFICO DE LINHA (sem inventar dados)
+            # - só cria ponto quando existe transação
+            # ==========================================
+            df_vg = df[(df["data_fmt"] >= start_ts) & (df["data_fmt"] <= end_ts)].copy()
+            df_vg = df_vg.sort_values("data_fmt").copy()
+
+            # ✅ granularidade para linha:
+            # - Anual: agrupa por mês (só meses com movimento)
+            # - resto: agrupa por dia (só dias com movimento)
+            if time_mode == "Anual":
+                line_freq = "M"
+            else:
+                line_freq = "D"
+
+            # Bucket do período SEM criar vazios
+            if line_freq == "D":
+                df_vg["periodo"] = df_vg["data_fmt"].dt.floor("D")
+            else:  # "M"
+                df_vg["periodo"] = df_vg["data_fmt"].dt.to_period("M").dt.start_time
+
             df_period = (
-                df_vg.set_index("data_fmt")
-                    .groupby(pd.Grouper(freq=freq))["delta"]
+                df_vg.groupby("periodo", as_index=False)["delta"]
                     .sum()
-                    .reset_index()
-                    .rename(columns={"data_fmt": "periodo", "delta": "delta_periodo"})
+                    .rename(columns={"delta": "delta_periodo"})
             )
 
+            df_period = df_period.sort_values("periodo").reset_index(drop=True)
             df_period["patrimonio"] = saldo_base + df_period["delta_periodo"].cumsum()
 
             fig_evol = go.Figure()
@@ -1087,6 +1124,11 @@ def do_main_app():
                 xaxis_title="Período",
                 yaxis_title="R$",
             )
+
+            # # Debug dos gráficos
+            # st.write("line_freq:", line_freq)
+            # st.write(df_period.tail(10))
+
 
             g2.plotly_chart(fig_evol, use_container_width=True)
         else:
