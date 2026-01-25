@@ -890,7 +890,7 @@ def do_main_app():
             # ============================
             # SELETOR DE TEMPO (Visão Geral)
             # ============================
-            df["data_fmt"] = pd.to_datetime(df["data"], errors="coerce")
+            df["data_fmt"] = parse_tx_datetime(df["data"])
             df = df.dropna(subset=["data_fmt"]).copy()
 
             # Estado do filtro (mantém escolha ao navegar)
@@ -982,11 +982,25 @@ def do_main_app():
                 return
 
             # ============================
-            # Normaliza impacto (delta) e agrega por período (para os gráficos)
+            # Normaliza impacto (delta) NO DATAFRAME TODO
+            # (pra conseguir saldo base antes do período)
             # ============================
-            df_vg["delta"] = df_vg["valor"].astype(float)
-            df_vg.loc[df_vg["tipo"] == "Saída", "delta"] = -df_vg.loc[df_vg["tipo"] == "Saída", "delta"].abs()
-            df_vg.loc[df_vg["tipo"] == "Entrada", "delta"] = df_vg.loc[df_vg["tipo"] == "Entrada", "delta"].abs()
+            df["delta"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0.0)
+            df.loc[df["tipo"] == "Saída", "delta"] = -df.loc[df["tipo"] == "Saída", "delta"].abs()
+            df.loc[df["tipo"] == "Entrada", "delta"] = df.loc[df["tipo"] == "Entrada", "delta"].abs()
+
+            # Filtra tudo da página (agora mantendo delta)
+            df_vg = df[(df["data_fmt"] >= start_ts) & (df["data_fmt"] <= end_ts)].copy()
+
+            if df_vg.empty:
+                st.info("Sem transações no período selecionado.")
+                return
+
+            # ✅ saldo acumulado antes do período (base)
+            saldo_base = float(df[df["data_fmt"] < start_ts]["delta"].sum())
+
+            # ✅ saldo no fim do período (o “saldo atualizado”)
+            saldo_no_fim = saldo_base + float(df_vg["delta"].sum())
 
             # Mapeia granularidade -> frequência pandas
             freq_map = {
@@ -998,31 +1012,33 @@ def do_main_app():
             }
             freq = freq_map.get(time_mode, "M")
 
-            ent_total = df_vg[df_vg["tipo"] == "Entrada"]["valor"].sum()
-            sai_total = df_vg[df_vg["tipo"] == "Saída"]["valor"].sum()
-            balanco = ent_total - sai_total
+            ent_total = float(df_vg[df_vg["tipo"] == "Entrada"]["valor"].sum())
+            sai_total = float(df_vg[df_vg["tipo"] == "Saída"]["valor"].sum())
+
+            balanco_periodo = ent_total - sai_total  # (balanço só do período)
+            balanco_atual = float(saldo_no_fim)      # (saldo real acumulado até o fim do período)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Entradas", f"R$ {ent_total:,.2f}")
+            c1.metric("Entradas (período)", f"R$ {ent_total:,.2f}")
 
-            # Saídas: sempre “ruim” (vermelho). Usamos inverse pra seta ir pra baixo/vermelho.
             c2.metric(
-                "Saídas",
+                "Saídas (período)",
                 f"R$ {sai_total:,.2f}",
                 delta=f"-{sai_total:,.2f}",
                 delta_color="inverse",
             )
 
-            # Balanço: verde quando positivo, vermelho quando negativo
-            bal_delta_color = "normal" if balanco >= 0 else "inverse"
-            bal_delta_txt = f"+{balanco:,.2f}" if balanco >= 0 else f"{balanco:,.2f}"
+            bal_delta_color = "normal" if balanco_atual >= 0 else "inverse"
+            bal_delta_txt = f"+{balanco_atual:,.2f}" if balanco_atual >= 0 else f"{balanco_atual:,.2f}"
 
             c3.metric(
-                "Balanço Atual",
-                f"R$ {balanco:,.2f}",
+                "Saldo Atual",
+                f"R$ {balanco_atual:,.2f}",
                 delta=bal_delta_txt,
                 delta_color=bal_delta_color,
             )
+
+            # st.caption(f"Balanço do período: R$ {balanco_periodo:,.2f}")
 
             st.divider()
 
@@ -1044,7 +1060,7 @@ def do_main_app():
                     .rename(columns={"data_fmt": "periodo", "delta": "delta_periodo"})
             )
 
-            df_period["patrimonio"] = df_period["delta_periodo"].cumsum()
+            df_period["patrimonio"] = saldo_base + df_period["delta_periodo"].cumsum()
 
             fig_evol = go.Figure()
             fig_evol.add_trace(
