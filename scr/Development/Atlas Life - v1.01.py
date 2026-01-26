@@ -687,7 +687,7 @@ def horas_para_dias_trabalho(horas: float, horas_dia: float = 8.0) -> int:
 # ---------------------------
 # UI — APP
 # ---------------------------
-st.set_page_config(page_title="Atlas Life", layout="wide")
+st.set_page_config(page_title="Atlas Life (Development)", layout="wide")
 
 # ---------------------------
 # TEMA / ESTILO (CSS)
@@ -763,7 +763,7 @@ if "active_goal" not in st.session_state:
 def do_login_screen():
     cols = st.columns([1, 2, 1])
     with cols[1]:
-        st.title("🛡️ Atlas Life")
+        st.title("🛡️ Atlas Life v1.01 (Development)")
         t_login, t_reg = st.tabs(["Acessar", "Registrar"])
 
         with t_login:
