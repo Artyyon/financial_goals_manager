@@ -252,14 +252,37 @@ def build_transactions_pdf(
 # GUIA DE CATEGORIAS (MANUAL)
 # ============================
 CATEGORY_GUIDE = {
-    "Salário": "Renda principal do mês (salário, pró-labore fixo). Use quando for o pagamento recorrente do trabalho.",
-    "Extra": "Entradas não recorrentes (freela, bônus, cashback, venda de algo, reembolso).",
-    "Alimentação": "Gastos com comida e bebida (mercado, restaurante, lanche, delivery).",
-    "Lazer": "Gastos de diversão/entretenimento (cinema, jogos, passeios, hobbies, assinaturas de lazer).",
-    "Contas": "Obrigações fixas do mês (aluguel, água, luz, internet, cartão, mensalidades, impostos).",
-    "Transporte": "Deslocamento (combustível, Uber, ônibus, estacionamento, manutenção do veículo).",
-    # "Ajuste": "Use apenas para correções de saldo (quando precisar ajustar o balanço por diferença/erro).",
-    "Outros": "Quando não encaixar bem nas demais. Se estiver usando muito, crie uma categoria nova depois.",
+    # ENTRADAS
+    "Salário": "Renda principal recorrente (salário, pró-labore fixo).",
+    "Extra": "Entradas não recorrentes (freela, bônus, cashback, vendas, reembolsos).",
+
+    # ESSENCIAIS
+    "Moradia": "Gastos com moradia (aluguel, condomínio, financiamento, IPTU).",
+    "Alimentação": "Comida e bebida (mercado, restaurante, delivery).",
+    "Transporte": "Deslocamento (combustível, Uber, ônibus, manutenção).",
+    "Saúde": "Plano de saúde, consultas, exames, remédios.",
+    "Educação": "Cursos, mensalidades, livros, certificações.",
+
+    # FINANCEIRO
+    "Contas": "Contas fixas (água, luz, internet, telefone).",
+    "Cartão de Crédito": "Pagamentos e faturas de cartão.",
+    "Impostos": "Tributos, taxas governamentais, contribuições obrigatórias.",
+    "Taxas e Tarifas": "Tarifas bancárias, juros, multas.",
+
+    # PESSOAL
+    "Lazer": "Diversão e entretenimento (cinema, jogos, passeios).",
+    "Cuidados Pessoais": "Academia, estética, roupas, higiene.",
+    "Assinaturas": "Streaming, softwares, clubes e serviços recorrentes.",
+    "Presentes / Doações": "Presentes, doações, ajuda a terceiros.",
+
+    # METAS / PATRIMÔNIO
+    "Meta": "Aportes para metas financeiras.",
+    "Reserva de Emergência": "Dinheiro guardado para imprevistos.",
+    "Poupança": "Dinheiro separado para guardar, sem objetivo específico.",
+    "Investimentos": "Aplicações financeiras (CDB, Tesouro, fundos, ações).",
+
+    # OUTROS
+    "Outros": "Quando não se encaixar nas demais. Evite usar com frequência.",
 }
 
 def render_category_manual(selected_cat: str, cat_list: list[str]) -> None:
@@ -1295,7 +1318,39 @@ def do_main_app():
             tt = c1.selectbox("Tipo", ["Entrada", "Saída"], index=tt_default, key="tx_tipo")
 
             # categorias disponíveis (as mesmas do sistema)
-            cat_list = ["Salário", "Extra", "Alimentação", "Lazer", "Contas", "Transporte", "Outros"]
+            cat_list = [
+                # Entradas
+                "Salário",
+                "Extra",
+
+                # Essenciais
+                "Moradia",
+                "Alimentação",
+                "Transporte",
+                "Saúde",
+                "Educação",
+
+                # Financeiro
+                "Contas",
+                "Cartão de Crédito",
+                "Impostos",
+                "Taxas e Tarifas",
+
+                # Pessoal
+                "Lazer",
+                "Cuidados Pessoais",
+                "Assinaturas",
+                "Presentes / Doações",
+
+                # Metas / Patrimônio
+                "Meta",
+                "Reserva de Emergência",
+                "Poupança",
+                "Investimentos",
+
+                # Outros
+                "Outros",
+            ]
 
             if edit_mode and current_edit.get("categoria") in cat_list:
                 cat_idx = cat_list.index(current_edit.get("categoria"))
