@@ -1,13 +1,13 @@
-# Atlas Life v3 — Gestão Financeira + Gestão de Metas
+# Atlas Life v1.01 — Gestão Financeira + Gestão de Metas
 # Origem: Gestor Financeiro v1 + Gestor de Metas v4 (unificados em um único app Streamlit)
 #
 # Como rodar:
 #   pip install streamlit pandas bcrypt cryptography plotly
 #   streamlit run Atlas_Life_v3_unificado.py
-#   streamlit run "scr\Gestor Unificado\Atlas Life - Gestor Unificado.py"
+#   streamlit run "scr\Application Development\Atlas Life - v1.01.py"
 #
 # Observação importante sobre dados antigos:
-# - Este app usa um NOVO banco SQLite por padrão: db/atlas_life_unified_v3.db
+# - Este app usa um NOVO banco SQLite por padrão: db/Development/atlas_life_development.db
 # - Ele não migra automaticamente os DBs antigos (atlas_life_v1.db e atlas_secure_v2.db).
 #   Se quiser, peça que eu gere um script de migração 100% automático.
 
@@ -305,7 +305,7 @@ def render_category_manual(selected_cat: str, cat_list: list[str]) -> None:
 # ---------------------------
 # CONFIGURAÇÕES
 # ---------------------------
-DB_FILE = "db/atlas_life_unified_v3.db"
+DB_FILE = "db/Development/atlas_life_development.db"
 SALT_FILE = "key/salt.bin"
 
 LEVEL_BASE_VALUE = 100.0
@@ -847,7 +847,7 @@ def do_main_app():
     # sidebar global
     with st.sidebar:
         st.title(f"👤 {username}")
-        st.caption("Atlas Life v3.1")
+        st.caption("Atlas Life v1.01 (Development)")
 
         patrimony = get_user_patrimony(username, protector)
         lvl, l_min, l_needed, l_prog = get_level_info(patrimony)
