@@ -4,7 +4,7 @@
 # Como rodar:
 #   pip install streamlit pandas bcrypt cryptography plotly
 #   streamlit run Atlas_Life_v3_unificado.py
-#   streamlit run "scr\Application Development\Atlas Life - v1.01.py"
+#   streamlit run "src\Development\Atlas Life - v1.01.py"
 #
 # Observação importante sobre dados antigos:
 # - Este app usa um NOVO banco SQLite por padrão: db/Development/atlas_life_development.db
@@ -687,7 +687,7 @@ def horas_para_dias_trabalho(horas: float, horas_dia: float = 8.0) -> int:
 # ---------------------------
 # UI — APP
 # ---------------------------
-st.set_page_config(page_title="Atlas Life", layout="wide")
+st.set_page_config(page_title="Atlas Life (Development)", layout="wide")
 
 # ---------------------------
 # TEMA / ESTILO (CSS)
@@ -763,7 +763,7 @@ if "active_goal" not in st.session_state:
 def do_login_screen():
     cols = st.columns([1, 2, 1])
     with cols[1]:
-        st.title("🛡️ Atlas Life")
+        st.title("🛡️ Atlas Life v1.01 (Development)")
         t_login, t_reg = st.tabs(["Acessar", "Registrar"])
 
         with t_login:

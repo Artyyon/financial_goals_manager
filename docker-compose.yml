@@ -1,14 +1,11 @@
-version: "3.9"
-
 services:
   atlas-life:
     build: .
-    container_name: atlas-life
     ports:
       - "8501:8501"
     volumes:
-      - ./db:/app/db
-      - ./key:/app/key
+      - ./db/Production:/app/db/Production
+      - ./key:/app/key:ro
     env_file:
       - .env
     restart: unless-stopped

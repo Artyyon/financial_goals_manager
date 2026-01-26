@@ -1,0 +1,16 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+backup/
+db/
+docs/
+img/
+key/
+nginx/
+portal/
+*.log
+.DS_Store
