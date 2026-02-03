@@ -1,8 +1,11 @@
 services:
   atlas-life:
-    build: .
+    image: ${APP_NAME}:${APP_VERSION}
+    build:
+      context: .
+    container_name: ${APP_NAME}_${APP_VERSION}
     ports:
-      - "8501:8501"
+      - "${APP_PORT}:8501"
     volumes:
       - ./db/Production:/app/db/Production
       - ./key:/app/key:ro
