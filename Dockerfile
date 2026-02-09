@@ -29,7 +29,7 @@ WORKDIR /app
 # build-essential: compilador + ferramentas de build
 # libffi-dev: comum para libs de crypto e afins
 #
-# Se seu requirements.txt não precisa compilar nada, dá para remover,
+# Se seu requirements-v0.5.0-beta.txt não precisa compilar nada, dá para remover,
 # mas normalmente manter isso evita erro de build.
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -40,13 +40,13 @@ RUN apt-get update && apt-get install -y \
 # ------------------------------------------------------------
 # 5) Instala dependências Python (melhor prática de cache)
 # ------------------------------------------------------------
-# Copiamos primeiro o requirements.txt
+# Copiamos primeiro o requirements-v0.5.0-beta.txt
 # Isso permite que o Docker faça cache da instalação se o código mudar,
-# mas o requirements.txt não mudar.
-COPY requirements.txt /app/requirements.txt
+# mas o requirements-v0.5.0-beta.txt não mudar.
+COPY requirements-v0.5.0-beta.txt /app/requirements-v0.5.0-beta.txt
 
 # Instala as dependências do projeto
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-v0.5.0-beta.txt
 
 
 # ------------------------------------------------------------

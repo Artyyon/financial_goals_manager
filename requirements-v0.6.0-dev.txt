@@ -1,0 +1,12 @@
+streamlit
+pandas
+bcrypt
+cryptography
+plotly
+customtkinter
+matplotlib
+
+reportlab
+openpyxl
+
+jupyterlab
