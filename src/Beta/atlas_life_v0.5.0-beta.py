@@ -1,13 +1,13 @@
-# Atlas Life v1.01 — Gestão Financeira + Gestão de Metas
+# Atlas Life v0.5.0-beta — Gestão Financeira + Gestão de Metas
 # Origem: Gestor Financeiro v1 + Gestor de Metas v4 (unificados em um único app Streamlit)
 #
 # Como rodar:
 #   pip install streamlit pandas bcrypt cryptography plotly
 #   streamlit run Atlas_Life_v3_unificado.py
-#   streamlit run "src\Development\Atlas Life - v1.01.py"
+#   streamlit run "scr\Development\Atlas Life - v0.5.0-beta.py"
 #
 # Observação importante sobre dados antigos:
-# - Este app usa um NOVO banco SQLite por padrão: db/Development/atlas_life_development.db
+# - Este app usa um NOVO banco SQLite por padrão: db/Beta/atlas_life_v0.5.0-beta.db
 # - Ele não migra automaticamente os DBs antigos (atlas_life_v1.db e atlas_secure_v2.db).
 #   Se quiser, peça que eu gere um script de migração 100% automático.
 
@@ -305,7 +305,7 @@ def render_category_manual(selected_cat: str, cat_list: list[str]) -> None:
 # ---------------------------
 # CONFIGURAÇÕES
 # ---------------------------
-DB_FILE = "db/Development/atlas_life_development.db"
+DB_FILE = "db/Beta/atlas_life_v0.5.0-beta.db"
 SALT_FILE = "key/salt.bin"
 
 LEVEL_BASE_VALUE = 100.0
@@ -687,7 +687,7 @@ def horas_para_dias_trabalho(horas: float, horas_dia: float = 8.0) -> int:
 # ---------------------------
 # UI — APP
 # ---------------------------
-st.set_page_config(page_title="Atlas Life (Development)", layout="wide")
+st.set_page_config(page_title="Atlas Life", layout="wide")
 
 # ---------------------------
 # TEMA / ESTILO (CSS)
@@ -763,7 +763,7 @@ if "active_goal" not in st.session_state:
 def do_login_screen():
     cols = st.columns([1, 2, 1])
     with cols[1]:
-        st.title("🛡️ Atlas Life v1.01 (Development)")
+        st.title("🛡️ Atlas Life v0.5.0-beta")
         t_login, t_reg = st.tabs(["Acessar", "Registrar"])
 
         with t_login:
@@ -847,7 +847,7 @@ def do_main_app():
     # sidebar global
     with st.sidebar:
         st.title(f"👤 {username}")
-        st.caption("Atlas Life v1.01 (Development)")
+        st.caption("Atlas Life v0.5.0-beta")
 
         patrimony = get_user_patrimony(username, protector)
         lvl, l_min, l_needed, l_prog = get_level_info(patrimony)

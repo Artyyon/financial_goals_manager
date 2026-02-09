@@ -7,7 +7,7 @@ services:
     ports:
       - "${APP_PORT}:8501"
     volumes:
-      - ./db/Production:/app/db/Production
+      - ./db/Beta:/app/db/Beta
       - ./key:/app/key:ro
     env_file:
       - .env

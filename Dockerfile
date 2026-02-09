@@ -53,12 +53,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 6) Copia o código da aplicação para dentro do container
 # ------------------------------------------------------------
 # Aqui copiamos apenas o código de PRODUÇÃO.
-# Resultado: o conteúdo de src/Production ficará diretamente dentro de /app
+# Resultado: o conteúdo de src/Beta ficará diretamente dentro de /app
 #
 # Exemplo:
-# - host: src/Production/atlas_life_v1_01.py
-# - container: /app/atlas_life_v1_01.py
-COPY src/Production /app
+# - host: src/Beta/atlas_life_v0.5.0-beta.py
+# - container: /app/atlas_life_v0.5.0-beta.py
+COPY src/Beta /app
 
 
 # ------------------------------------------------------------
@@ -75,4 +75,4 @@ EXPOSE 8501
 # chamamos o arquivo direto pelo nome.
 #
 # --server.address=0.0.0.0 é obrigatório para funcionar dentro do Docker
-CMD ["streamlit", "run", "atlas_life_v1_01.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "atlas_life_v0.5.0-beta.py", "--server.port=8501", "--server.address=0.0.0.0"]
